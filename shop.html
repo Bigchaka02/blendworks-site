@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop blends — BlendWorks</title>
+<meta name="description" content="Browse in-stock BlendWorks capsule and powder supplement blends. Search by goal or ingredient, choose a quantity, add to cart.">
+<meta name="theme-color" content="#0B1020">
+<link rel="canonical" href="https://blendworks.fit/shop.html">
+<meta property="og:url" content="https://blendworks.fit/shop.html">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<script>document.documentElement.className+=' curtain-pending';setTimeout(function(){document.documentElement.classList.remove('curtain-pending')},3000)</script>
+<link rel="stylesheet" href="assets/css/styles.css?v=20260913">
+</head>
+<body data-page="shop">
+<header id="site-header"></header>
+<main>
+<section class="page-hero">
+  <div class="mesh" aria-hidden="true"><span class="b1"></span><span class="b2"></span></div>
+  <div class="container">
+    <div class="eyebrow">In stock &middot; ships within days</div>
+    <h1>Shop <span class="grad-text">blends</span></h1>
+    <p class="lead">Ready-made capsule and powder formulas, every milligram disclosed. Search by goal, ingredient or name.</p>
+  </div>
+</section>
+
+<section class="section" style="padding-top:1rem">
+  <div class="container wide">
+    <div class="shop-toolbar">
+      <div class="search-bar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="input" type="search" data-search placeholder="Search blends, ingredients, goals… (e.g. creatine, focus, stim-free)" aria-label="Search products" autocomplete="off">
+        <button class="btn-icon clear" data-clear-search aria-label="Clear search" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="type-tabs" role="tablist" aria-label="Product type">
+        <button data-type="all" class="is-active">All</button>
+        <button data-type="capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="8" width="18" height="8" rx="4" transform="rotate(-35 12 12)"/><path d="m9.5 7.5 5 9"/></svg>Capsules</button>
+        <button data-type="powder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="4" rx="1.5"/><path d="M5 7h14l-1 13H6z"/><path d="M8 12h8"/></svg>Powders</button>
+      </div>
+      <!-- TODO(builder): this button is intentionally disconnected — it will open the Blend Builder. -->
+      <a class="btn btn-primary build-btn" href="#" data-build><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="3"/></svg> Build your own</a>
+    </div>
+
+    <div class="filters" aria-label="Filters">
+      <span class="muted" style="font-size:.85rem;margin-right:.25rem">Goal:</span>
+      <span data-goals style="display:contents"></span>
+      <span class="sep"></span>
+      <button class="chip" data-stim>Stim-free only</button>
+      <button class="chip" data-reset style="border-style:dashed">Reset</button>
+    </div>
+
+    <div class="results-row">
+      <span data-count>12 blends</span>
+      <label class="row" style="gap:.6rem"><span style="font-size:.85rem">Sort</span>
+        <select class="input select" data-sort aria-label="Sort products">
+          <option value="featured">Featured</option><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="name">Name A–Z</option>
+        </select></label>
+    </div>
+
+    <div class="product-grid reveal-stagger" data-grid aria-live="polite"></div>
+    <div class="empty-state" data-empty hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/></svg>
+      <h3>No blends match that search</h3>
+      <p>Try a goal like "focus" or "recovery", an ingredient like "creatine", or reset the filters.</p>
+      <button class="btn btn-secondary" data-reset>Reset filters</button>
+    </div>
+  </div>
+</section>
+</main>
+<footer id="site-footer"></footer>
+<script src="assets/js/data/products.js?v=20260913"></script>
+<script src="assets/js/cart.js?v=20260913"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/SplitText.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/Flip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.3.11/dist/lenis.min.js"></script>
+<script src="assets/js/site.js?v=20260913"></script>
+<script src="assets/js/motion.js?v=20260913"></script>
+<script src="assets/js/shop.js?v=20260913"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# PRIVATE / PRE-LAUNCH: keep search engines out. At public launch replace the Disallow line with:  Allow: /
+User-agent: *
+Disallow: /
+Sitemap: https://blendworks.fit/sitemap.xml
