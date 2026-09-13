@@ -9,6 +9,7 @@ A complete, dependency-free storefront: browse in-stock capsule and powder blend
 - **Local server (recommended):** from the `QwenFolder` root run `python -m http.server 8765` and open `http://localhost:8765/05-website/` — or use the `static-preview` launch config in `.claude/launch.json`.
 
 ## Deploy it (minutes, no build step)
+Source of truth: private GitHub repo **Bigchaka02/blendworks-site** (this folder is the working copy; `git push` on `main` triggers the Cloudflare Pages deploy once connected).
 See `../06-deployment/README.md` — domain availability, hosting options with a private/public toggle, and the step-by-step for the recommended path (Cloudflare Pages + Access). `robots.txt` and `_headers` in this folder are pre-configured for the private phase; `../06-deployment/blendworks-site-upload.zip` is the upload-ready package (rebuild it after edits).
 
 ## Where to edit things
