@@ -1,86 +1,32 @@
-# BlendWorks website — v1 (static)
+# BlendWorks website (live at https://blendworks.fit)
 
-A complete, dependency-free storefront: browse in-stock capsule and powder blends, search/filter, choose quantities, add to a persistent cart, preview the cart, and reach a placeholder checkout. Plus About, Mission & goals, Contact (+FAQ), Terms, Privacy and 404 pages.
+Static, dependency-free storefront with a GSAP motion layer. This folder is the git working copy of the private repo **Bigchaka02/blendworks-site**; every push to `main` deploys to Cloudflare (see `../06-deployment/README.md`).
 
-**Status (2026-09-12):** running locally, ready to deploy as-is. Payments, the Blend Builder, the contact-form backend, the newsletter and real product data are intentionally placeholders (see "What is placeholder").
-
-## Live
-https://blendworks.fit — Cloudflare Worker `blendworks-site`, deployed automatically from the private GitHub repo on every push to `main` (`wrangler.jsonc` serves this folder as static assets; `.assetsignore` keeps config/docs/.git out of the upload). Internal links use clean URLs (`shop`, `product?id=…`), matching Workers' HTML handling.
-
-## Run it
-- **Simplest:** double-click `index.html` (everything is relative; only the Google Fonts need internet).
-- **Local server (recommended):** from the `QwenFolder` root run `python serve.py` and open `http://localhost:8765/05-website/` (serve.py resolves clean URLs like production) — or use the `static-preview` launch config in `.claude/launch.json`.
-
-## Deploy it (minutes, no build step)
-Source of truth: private GitHub repo **Bigchaka02/blendworks-site** (this folder is the working copy; `git push` on `main` triggers the Cloudflare Pages deploy once connected).
-See `../06-deployment/README.md` — domain availability, hosting options with a private/public toggle, and the step-by-step for the recommended path (Cloudflare Pages + Access). `robots.txt` and `_headers` in this folder are pre-configured for the private phase; `../06-deployment/blendworks-site-upload.zip` is the upload-ready package (rebuild it after edits).
-
-## Where to edit things
-| Want to change… | Edit |
-|---|---|
-| Products, prices, stock, ingredients, badges, colours | `assets/js/data/products.js` (one array; every page reads it) |
-| Builder ingredients, capsule sizes/counts, scoop/box sizes, pricing formula | `assets/js/data/ingredients.js` |
-| Colours, fonts, spacing, animations | `assets/css/styles.css` (tokens at the top) |
-| Header/footer links, icons, cart drawer, search overlay, toasts | `assets/js/site.js` |
-| Cart behaviour (limits, storage key) | `assets/js/cart.js` |
-| Shop filters/sort/search | `assets/js/shop.js` |
-| Product page layout | `assets/js/product.js` |
-| Checkout placeholder + order maths | `assets/js/checkout.js` → `BW.checkout` |
-| Page copy | the `.html` files |
-| Logo/favicon | `assets/img/` (sources in `../03-brand/logo/`) |
+## Pages (clean URLs; `.html` is redirected by the host)
+`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (placeholder) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html`
 
 ## Structure
 ```
-05-website/
-├─ index.html · shop.html · product.html?id=<slug> · build.html?step=1|2|3 · cart.html · checkout.html
-├─ about.html · mission.html · contact.html · terms.html · privacy.html · 404.html
-└─ assets/
-   ├─ css/styles.css              design system + all page styles (dark theme)
-   ├─ img/                        logo, icon, favicon (SVG)
-   └─ js/
-      ├─ data/products.js         PLACEHOLDER catalog (window.BW.products)
-      ├─ data/ingredients.js      builder ingredients + sizes + pricing (BW.builder)
-      ├─ build.js                 Build-your-own: steps, ratio slider, artwork, custom cart items
-      ├─ cart.js                  localStorage cart store (BW.cart) + "bw:cart" events
-      ├─ site.js                  shell: header, footer, cart drawer, search (Ctrl+K), toasts, reveal, product artwork
-      ├─ shop.js                  grid, search, filters, sort, add-to-cart (also provides BW.productCard)
-      ├─ product.js · cart-page.js · checkout.js · contact.js · home.js
+index.html … 404.html            pages (each loads the same script set at the bottom)
+wrangler.jsonc  .assetsignore    Cloudflare Worker static-assets config / upload exclusions
+_headers  robots.txt  sitemap.xml
+assets/css/styles.css            design system + all page styles (dark theme); §9 = builder
+assets/img/                      logo, icon, favicon (sources in ../03-brand/logo)
+assets/js/
+  data/products.js               PLACEHOLDER in-stock catalog (window.BW.products)
+  data/ingredients.js            PLACEHOLDER builder ingredients, capsule/scoop sizes, pricing formula (BW.builder)
+  cart.js                        localStorage cart (BW.cart; custom items carry their product inline)
+  site.js                        shell: header/footer/nav, product artwork, cart drawer, Ctrl+K search, toasts, BW.fx()
+  motion.js                      GSAP 3.13 + Lenis layer (BW.motion); intro curtain, transitions, reveals, Flip grid, hooks
+  shop.js  product.js  build.js  home.js  cart-page.js  checkout.js  contact.js   page scripts
 ```
-Global namespace: `window.BW` (`BW.products`, `BW.cart`, `BW.checkout`, `BW.art`, `BW.toast`, …). No frameworks, no build.
+Global namespace `window.BW`. Motion is always on; every animation call goes through `BW.fx(name, …)`, a no-op if the CDN scripts fail, so the site degrades to static but fully usable.
 
-## What is placeholder (and where the hook is)
-| Feature | State | Hook |
-|---|---|---|
-| **Build your own** (`/build`) | **Live** — 3-step builder: format → size → 10%-step ratio slider; custom blends go into the cart. Capacities/sizes/prices are placeholders | `build.html`, `assets/js/build.js`, `assets/js/data/ingredients.js` |
-| **Checkout / payments** | UI + cart validation + summary maths real; no provider | `BW.checkout.createSession()` in `checkout.js`; `checkout.html` |
-| **Product catalog** | 12 placeholder blends with placeholder prices/stock | `assets/js/data/products.js` |
-| **Contact form** | Simulated submit, nothing sent | `contact.js` (TODO: form/email service) |
-| **Newsletter** | Simulated | `site.js` footer form |
-| **Legal pages** | Structural placeholders | `terms.html`, `privacy.html` |
-| **Team / lab / certification blocks** | Placeholder cards | `about.html` |
-| **Shipping regions / rates** | Placeholder flat rate | `BW.checkout` constants |
+## Build your own (`/build`)
+Step 1 format (capsules/powder) → Step 2 size (capsule 0/00/000 × 30/60/90/120, or 5/10/15 g scoop × 15/30/60 servings) → Step 3 ingredients (2–6 chips) + ratio bar with dividers snapping to 10 % (drag or arrow keys), live capsule/tub artwork, per-unit mg table, price, "Reset to even split", optional name, Add to cart. Draft in `localStorage.bw_build_v1`; steps mirrored in `?step=`. Guard: caffeine ≤ 200 mg per unit. Custom cart items get id `custom-…` encoding the recipe.
 
-## Decisions made while building (see `../notes/decisions-log.md` D12–D15)
-- Static vanilla site now (no Node on the build machine; deployable instantly); migrate to the Next.js plan in `../04-website-plan/` when payments/accounts arrive.
-- Dark, glassy, gradient theme; motion respects `prefers-reduced-motion`.
-- Cart lives in the browser (`localStorage`, key `bw_cart_v1`), max 10 per line, capped by stock.
-- Product imagery is generated SVG (no photos yet) so every product gets consistent art from its two colours.
+## Local development
+`python serve.py` from the workspace root → http://localhost:8765/05-website/ (clean URLs resolve like production). Bump `?v=` on asset links after CSS/JS edits. Commit + push to deploy.
 
-## Motion layer (added 2026-09-12, second pass)
-Premium interaction layer built on **GSAP 3.13** (core, ScrollTrigger, SplitText, Flip — all free since the Webflow acquisition) and **Lenis** smooth scroll, loaded from CDNs in every page before `site.js`. `assets/js/motion.js` exposes `BW.motion`; if the CDN scripts fail, the site silently falls back to the original CSS/IntersectionObserver animations.
-
-What it does:
-- **Global:** first-visit intro (monogram draws itself, curtain lifts), branded curtain page transitions, smooth scroll (desktop), scroll-progress bar, header hides on scroll-down / returns on scroll-up, lightly magnetic buttons, press feedback, split-line heading reveals, staggered scroll reveals, subtle glare + tilt on cards, animated accordions, spring toasts, cart-drawer choreography, Flip-style product fly-to-cart. (Cursor followers and mouse-parallax were removed at the founder's request on 2026-09-12; hover tilt/glare were toned down.)
-- **Home:** stacked hero — headline block on top, then the capsule with particles/orbits and **four floating step cards ("How it works", 01–04)** around it (the separate How-it-works section was removed); words unmask, capsule pops in with an elastic ease, cards drift gently; hero fades away on scroll; scroll-velocity-reactive ingredient marquee; count-up stats; parallax facts card; stagger-grid dots in the CTA band.
-- **Shop:** filter/search/sort changes animate the grid with Flip layout transitions (cards slide to new positions, enter/exit with scale).
-- **Product:** staged entrance, cursor-driven 3D tilt of the art, facts rows stagger, sticky mobile "Add to cart" bar.
-- **Cart / content pages:** item entrance/exit animations, timeline line draws on scroll, mission statement unmasks line by line.
-
-Motion is always on (the founder removed the Full/Calm toggle on 2026-09-13; `prefers-reduced-motion` is not consulted). If the CDN scripts fail to load, the site renders fully static — content is never hidden by CSS; GSAP sets the initial hidden states itself.
-
-Where the pieces live: `motion.js` (engine + hooks exposed as `BW.motion.*`, called from other scripts through `BW.fx(name, …)` so every call is a safe no-op without GSAP), `home.js` (home scenes), `shop.js` (cards + shared add-to-cart flow + shop filters), `product.js`, `cart-page.js`, `checkout.js`, `contact.js`. `styles.css` holds only static states and cheap decorative loops (orbits, mesh, glow, shimmer) — one motion implementation, no CSS/JS double-driving. A one-line inline script in each `<head>` shows a dark cover until the curtain takes over, so there is no flash between pages.
-
-**Code hygiene pass (2026-09-13):** CSS 54 KB → 44 KB (fix sections folded into base rules, dead rules and duplicate media queries removed), site.js 28 KB → 20 KB (unused icons, baseline IntersectionObserver/tilt/keyframe fallbacks removed), motion.js 18 KB → 15 KB (preference machinery and cursor code removed). Asset links carry `?v=` cache-busting — bump it when you change CSS/JS.
-
-## Build-your-own (added 2026-09-13)
-`/build` walks through **Format** (capsules or powder) → **Size** (capsule size 0/00/000 + 30/60/90/120 capsules, or 5/10/15 g scoop + 15/30/60 servings) → **Ratios**: pick 2–6 ingredients, then drag the dividers of a capsule-shaped bar (10 % snaps, keyboard arrows work) while the capsule/tub artwork, per-unit mg table and price update live. "Reset to even split", optional blend name, then **Add to cart** creates a custom line item (`BW.cart.addCustom`) whose id encodes the recipe, so identical blends merge. Steps are mirrored in `?step=` (back button works) and the draft persists in `localStorage.bw_build_v1`. Safety guard: any ingredient with `maxMgPerUnit` (caffeine, 200 mg) blocks Add to cart when exceeded. All numbers in `ingredients.js` are placeholders.
+## Placeholders / not built
+Payments (`checkout.js` → `BW.checkout.createSession()` stub), product & builder data and prices, contact form and newsletter (simulated), legal copy, accounts/subscriptions, admin. See `../notes/open-questions-for-founder.md`.
