@@ -1,0 +1,83 @@
+{
+  "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'canonical': false = no canonical/og:url (404).",
+  "version": "20260913d",
+  "site": "https://blendworks.fit",
+  "pages": {
+    "index": {
+      "path": "/",
+      "title": "BlendWorks — Custom supplement capsules & powders, blended your way",
+      "description": "In-stock capsule and powder supplement blends with every milligram on the label. Full doses, no proprietary blends, made to order — or build your own.",
+      "plugins": ["splittext"],
+      "scripts": ["home"]
+    },
+    "shop": {
+      "path": "/shop",
+      "title": "Shop blends — BlendWorks",
+      "description": "Browse in-stock BlendWorks capsule and powder supplement blends. Search by goal or ingredient, choose a quantity, add to cart.",
+      "plugins": ["flip"],
+      "scripts": ["shop"]
+    },
+    "product": {
+      "path": "/product",
+      "title": "Product — BlendWorks",
+      "description": "Full formula, serving size and supplement facts for a BlendWorks blend.",
+      "scripts": ["product"],
+      "noindex": true
+    },
+    "build": {
+      "path": "/build",
+      "title": "Build your own blend — BlendWorks",
+      "description": "Design a custom supplement blend: choose capsules or powder, pick the size, then set each ingredient's share in 10% steps. Every milligram stays visible.",
+      "data": ["ingredients"],
+      "scripts": ["build"]
+    },
+    "cart": {
+      "path": "/cart",
+      "title": "Your cart — BlendWorks",
+      "description": "Review the blends in your BlendWorks cart before checkout.",
+      "scripts": ["cart-page"],
+      "noindex": true
+    },
+    "checkout": {
+      "path": "/checkout",
+      "title": "Checkout — BlendWorks",
+      "description": "BlendWorks checkout.",
+      "scripts": ["checkout"],
+      "noindex": true
+    },
+    "about": {
+      "path": "/about",
+      "title": "About — BlendWorks",
+      "description": "Why BlendWorks exists, how we make every blend in small traceable batches, and where we are today."
+    },
+    "mission": {
+      "path": "/mission",
+      "title": "Mission & goals — BlendWorks",
+      "description": "Our mission: give every person the power to build the exact supplement their body and goals call for — transparently, safely, simply.",
+      "plugins": ["splittext"]
+    },
+    "contact": {
+      "path": "/contact",
+      "title": "Contact — BlendWorks",
+      "description": "Ask BlendWorks about ingredients, doses, orders or custom blends, and read the FAQ.",
+      "scripts": ["contact"]
+    },
+    "terms": {
+      "path": "/terms",
+      "title": "Terms of service — BlendWorks",
+      "description": "BlendWorks terms of service."
+    },
+    "privacy": {
+      "path": "/privacy",
+      "title": "Privacy policy — BlendWorks",
+      "description": "How BlendWorks handles your data."
+    },
+    "404": {
+      "path": "/404",
+      "title": "Page not found — BlendWorks",
+      "description": "That page could not be found.",
+      "canonical": false,
+      "noindex": true
+    }
+  }
+}

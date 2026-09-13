@@ -34,6 +34,9 @@ BW.builder = {
     capsule: { ingredients: ["creatine", "theanine", "caffeine"], pct: { creatine: 50, theanine: 30, caffeine: 20 } },
     powder:  { ingredients: ["creatine", "citrulline", "betaalanine"], pct: { creatine: 50, citrulline: 30, betaalanine: 20 } }
   },
-  defaults: { format: null, capsuleSize: "00", capsules: 60, servingG: 10, servings: 30, ingredients: ["creatine", "theanine", "caffeine"], pct: { creatine: 50, theanine: 30, caffeine: 20 }, name: "", customised: false }
+  defaults: { format: null, capsuleSize: "00", capsules: 60, servingG: 10, servings: 30, name: "", customised: false }
 };
-BW.builder.get = function (id) { return BW.builder.ingredients.find(function (i) { return i.id === id; }); };
+// A fresh draft starts from the capsule preset until the user picks a format.
+BW.builder.defaults.ingredients = BW.builder.presets.capsule.ingredients.slice();
+BW.builder.defaults.pct = Object.assign({}, BW.builder.presets.capsule.pct);
+BW.builder.get = (id) => BW.builder.ingredients.find((i) => i.id === id);

@@ -1,60 +1,73 @@
 <!doctype html>
 <html lang="en">
 <head>
+<!-- bw:head -->
+<!-- generated from tools/pages.json by tools/sync_pages.py; edit those, not this block -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout — BlendWorks</title>
+<meta name="description" content="BlendWorks checkout.">
+<meta name="robots" content="noindex">
 <meta name="theme-color" content="#0B1020">
 <link rel="canonical" href="https://blendworks.fit/checkout">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BlendWorks">
 <meta property="og:url" content="https://blendworks.fit/checkout">
-<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<meta property="og:title" content="Checkout — BlendWorks">
+<meta property="og:description" content="BlendWorks checkout.">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script>document.documentElement.className+=' curtain-pending';setTimeout(function(){document.documentElement.classList.remove('curtain-pending')},3000)</script>
-<link rel="stylesheet" href="assets/css/styles.css?v=20260913c">
-<title>Checkout — BlendWorks</title>
+<link rel="stylesheet" href="/assets/css/styles.css?v=20260913d">
+<!-- /bw:head -->
 </head>
 <body data-page="checkout">
 <header id="site-header"></header>
 <main>
-<section class="page-hero" style="padding-bottom:1rem"><div class="container"><div class="eyebrow">Checkout</div><h1>Almost <span class="grad-text">there</span></h1><p class="lead">This page is the placeholder for the purchase flow. The cart, totals and validation are real; payment is not connected yet.</p></div></section>
-<section class="section" style="padding-top:1rem">
+<section class="page-hero pb-1"><div class="container"><div class="eyebrow">Checkout</div><h1>Almost <span class="grad-text">there</span></h1><p class="lead">Your order summary is ready. Online payment opens soon — nothing is charged today.</p></div></section>
+<section class="section pt-1">
   <div class="container">
     <div class="checkout-steps" aria-label="Checkout steps"><span class="is-active">1. Cart</span><span>2. Shipping</span><span>3. Payment</span><span>4. Confirmation</span></div>
     <div class="cart-layout">
       <div class="stack">
+        <!-- TODO(payments): replace this box with the provider's address + payment elements once Q13 is decided (see 04-website-plan/08-purchase-and-payments.md) -->
         <div class="placeholder-box">
-          <h3>Payment provider — decision pending</h3>
-          <p class="muted">Large decision deferred to the founder: Stripe (recommended in the website plan), PayPal, or a hosted commerce checkout. The code structure is in <code>assets/js/checkout.js</code> → <code>BW.checkout.createSession()</code>; once a provider is chosen, that function creates the hosted session and redirects.</p>
-          <ul class="checklist"><li><span><b>Cart validation</b> (stock, quantities) — implemented</span></li><li><span><b>Order summary maths</b> (subtotal, flat/free shipping) — implemented, placeholder rates</span></li><li><span><b>Shipping address form</b> — to be added with the provider's address element</span></li><li><span><b>Tax</b> — to be calculated by the provider</span></li><li><span><b>Payment + confirmation email</b> — not started</span></li></ul>
+          <h3>Online checkout is coming soon</h3>
+          <p class="muted">We're finishing our payment setup. Your cart and totals are saved in this browser, so everything here carries over the moment checkout opens.</p>
+          <ul class="checklist"><li><span><b>Cart and totals</b> — ready</span></li><li><span><b>Shipping address &amp; rates</b> — added with checkout</span></li><li><span><b>Tax</b> — calculated at checkout</span></li><li><span><b>Payment &amp; order confirmation</b> — coming with checkout</span></li></ul>
         </div>
-        <div class="notice">Placeholder shipping rate: $5.95 flat, free over $50. Not final.</div>
+        <div class="notice">Preliminary shipping estimate: $5.95 flat, free on orders over $50. Final rates will be confirmed before launch.</div>
         <div data-co-issues></div>
       </div>
       <aside class="card summary">
         <h3>Your order</h3>
-        <div class="stack" style="gap:.5rem;margin-bottom:1rem" data-co-items></div>
+        <div class="stack gap-sm mb-1" data-co-items></div>
         <div class="line"><span>Subtotal</span><span class="num" data-co-subtotal>$0.00</span></div>
         <div class="line"><span>Shipping</span><span data-co-shipping>—</span></div>
-        <div class="line"><span>Tax</span><span>Calculated by provider</span></div>
+        <div class="line"><span>Tax</span><span>Calculated at checkout</span></div>
         <div class="line total"><span>Total</span><span class="num" data-co-total>$0.00</span></div>
         <button class="btn btn-primary btn-block btn-lg" data-place-order>Place order</button>
-        <p class="note">Clicking "Place order" calls the placeholder <code style="font-size:.75rem">BW.checkout.createSession()</code>, which currently reports that checkout is not connected.</p>
-        <a class="btn btn-ghost btn-block" href="cart">&larr; Back to cart</a>
+        <p class="note">Payments aren't connected yet, so orders can't be completed today. We'll announce the opening date on the home page.</p>
+        <a class="btn btn-ghost btn-block" href="/cart">&larr; Back to cart</a>
       </aside>
     </div>
   </div>
 </section>
 </main>
 <footer id="site-footer"></footer>
-<script src="assets/js/data/products.js?v=20260913c"></script>
-<script src="assets/js/cart.js?v=20260913c"></script>
+<!-- bw:scripts -->
+<!-- generated from tools/pages.json by tools/sync_pages.py -->
+<script src="/assets/js/data/products.js?v=20260913d"></script>
+<script src="/assets/js/cart.js?v=20260913d"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/ScrollTrigger.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/SplitText.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.13.0/Flip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lenis@1.3.11/dist/lenis.min.js"></script>
-<script src="assets/js/site.js?v=20260913c"></script>
-<script src="assets/js/motion.js?v=20260913c"></script>
-<script src="assets/js/checkout.js?v=20260913c"></script>
+<script src="/assets/js/site.js?v=20260913d"></script>
+<script src="/assets/js/motion.js?v=20260913d"></script>
+<script src="/assets/js/checkout.js?v=20260913d"></script>
+<!-- /bw:scripts -->
 </body>
 </html>

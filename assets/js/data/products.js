@@ -3,10 +3,11 @@
    ---------------------------------------------------------------------
    Every product, price, ingredient amount and stock figure below is a
    placeholder to be replaced once the real product line is finalised.
-   Edit this file only; every page reads from window.BW.products.
-   Fields: id, slug, name, type ('capsule' | 'powder'), tagline, blurb,
-   goals[], stimFree, badges[], price (USD), servingSize, servings,
-   flavor (powders), ingredients[[name, amount]], stock, colors[2], featured
+   Data only — helpers (BW.getProduct, BW.formatPrice) live in cart.js. Every page reads window.BW.products.
+   Fields: id (canonical key; slug is the URL form used in product?id=slug — both resolve), name,
+   type ('capsule' | 'powder'), tagline, blurb, goals[] (each must appear in BW.goals), stimFree,
+   badges[], price (USD), servingSize, servings, flavor (powders), ingredients[[name, amount]],
+   stock (0 = sold out; <= 20 shows "low stock"), colors[2] (artwork gradient), featured (home page)
    ===================================================================== */
 window.BW = window.BW || {};
 
@@ -97,7 +98,5 @@ BW.products = [
     stock: 26, colors: ["#8B62E8", "#4C3FB8"], featured: false }
 ];
 
+// Filter chips on the shop page, in display order. tools/sync_pages.py --check verifies every product goal is listed here.
 BW.goals = ["Focus", "Energy", "Strength", "Pump", "Endurance", "Recovery", "Sleep", "Daily"];
-
-BW.formatPrice = function (n) { return "$" + n.toFixed(2); };
-BW.getProduct = function (id) { return BW.products.find(function (p) { return p.id === id || p.slug === id; }); };

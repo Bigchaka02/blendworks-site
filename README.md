@@ -3,30 +3,46 @@
 Static, dependency-free storefront with a GSAP motion layer. This folder is the git working copy of the private repo **Bigchaka02/blendworks-site**; every push to `main` deploys to Cloudflare (see `../06-deployment/README.md`).
 
 ## Pages (clean URLs; `.html` is redirected by the host)
-`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (placeholder) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html`
+`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (placeholder) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html` (served by the host for any unknown path, at any depth)
 
 ## Structure
 ```
-index.html … 404.html            pages (each loads the same script set at the bottom)
-wrangler.jsonc  .assetsignore    Cloudflare Worker static-assets config / upload exclusions
+index.html … 404.html            pages: hand-written <body>; the <head> and <script> blocks between the
+                                 <!-- bw:head --> / <!-- bw:scripts --> markers are GENERATED (see tools/)
+tools/pages.json                 per-page title, description, robots, data files, GSAP plugins, page scripts, ?v= version
+tools/sync_pages.py              regenerates the marked blocks, sitemap.xml and the CSP hash; --bump / --check
+wrangler.jsonc  .assetsignore    Cloudflare Worker static-assets config / upload exclusions (tools/ is not deployed)
 _headers  robots.txt  sitemap.xml
-assets/css/styles.css            design system + all page styles (dark theme); §9 = builder
-assets/img/                      logo, icon, favicon (sources in ../03-brand/logo)
+assets/css/styles.css            design system + all page styles (dark theme); §8 = builder, §9 = keyframes/responsive
+assets/img/                      logo + favicon (sources in ../03-brand/logo)
 assets/js/
-  data/products.js               PLACEHOLDER in-stock catalog (window.BW.products)
+  data/products.js               PLACEHOLDER in-stock catalog (window.BW.products, BW.goals) — data only
   data/ingredients.js            PLACEHOLDER builder ingredients, capsule/scoop sizes, pricing formula (BW.builder)
-  cart.js                        localStorage cart (BW.cart; custom items carry their product inline)
-  site.js                        shell: header/footer/nav, product artwork, cart drawer, Ctrl+K search, toasts, BW.fx()
-  motion.js                      GSAP 3.13 + Lenis layer (BW.motion); intro curtain, transitions, reveals, Flip grid, hooks
-  shop.js  product.js  build.js  home.js  cart-page.js  checkout.js  contact.js   page scripts
+  cart.js                        localStorage cart store + BW.getProduct/formatPrice + BW.cart.summary() (shipping maths)
+  site.js                        shell: icon sprite, product artwork, header/footer/menu, cart drawer + line items,
+                                 product cards + add-to-cart, Ctrl+K search, toasts, BW.fx()
+  motion.js                      GSAP 3.13 + Lenis layer (BW.motion): curtain/transitions, reveals, tilt/glare, hooks
+  shop.js product.js build.js home.js cart-page.js checkout.js contact.js   page scripts
 ```
-Global namespace `window.BW`. Motion is always on; every animation call goes through `BW.fx(name, …)`, a no-op if the CDN scripts fail, so the site degrades to static but fully usable.
+Script order on every page: `data/products.js`, [`data/ingredients.js`], `cart.js`, GSAP core + ScrollTrigger, [SplitText on home/mission], [Flip on shop], Lenis, `site.js`, `motion.js`, page script. Global namespace `window.BW`. Shared UI motion goes through `BW.fx(name, …)` (a no-op if the CDN fails, so the site degrades to static but fully usable); page-level choreography in `home.js`/`product.js` calls GSAP directly behind an `if (BW.motion)` guard (decision D16).
+
+## Conventions
+- **Links and assets are root-absolute** (`/shop`, `/assets/…`) so the 404 page works at any depth. `python tools/sync_pages.py --check` fails on relative links.
+- **Icons**: one sprite in `site.js`; use `<svg class="icon"><use href="#i-check"/></svg>` in HTML or `BW.icons.check` in JS.
+- **No inline `style=""`** for layout — use the utilities in `styles.css` §2 (`.pt-0`, `.mb-2`, `.center`, `.mx-auto`, …) or a component class. Inline styles are only for data-driven colours (`--c1`, ingredient swatches).
+- **Colours** come from tokens; translucent tints use `rgb(var(--sky-rgb) / .15)`.
+- `BW.toast(msg)` is plain text; pass `{ html: true }` only for trusted markup.
 
 ## Build your own (`/build`)
-Step 1 format (capsules/powder) → Step 2 size (capsule 0/00/000 × 30/60/90/120, or 5/10/15 g scoop × 15/30/60 servings) → Step 3 ingredients (2–6 chips) + ratio bar with dividers snapping to 10 % (drag or arrow keys), live capsule/tub artwork, per-unit mg table, price, "Reset to even split", optional name, Add to cart. Draft in `localStorage.bw_build_v1`; steps mirrored in `?step=`. Guard: caffeine ≤ 200 mg per unit. Custom cart items get id `custom-…` encoding the recipe.
+Step 1 format (capsules/powder) → Step 2 size (capsule 0/00/000 × 30/60/90/120, or 5/10/15 g scoop × 15/30/60 servings) → Step 3 ingredients (2–6 chips) + ratio bar with dividers snapping to 10 % (drag or arrow keys), live capsule/tub artwork, per-unit mg table, price, "Reset to even split", optional name, Add to cart. Draft in `localStorage.bw_build_v1`; steps mirrored in `?step=`. Guard: caffeine ≤ 200 mg per unit. Custom cart items get id `custom-…` encoding the recipe and carry their product object inline.
 
 ## Local development
-`python serve.py` from the workspace root → http://localhost:8765/05-website/ (clean URLs resolve like production). Bump `?v=` on asset links after CSS/JS edits. Commit + push to deploy.
+`python serve.py` from the workspace root → http://localhost:8765/ (serves this folder as the site root with clean URLs and the host's 404 behaviour). Port: first argument or `$PORT`.
+
+## Editing workflow
+1. Edit a page's body, CSS or JS. To change a title/description/robots/plugins, edit `tools/pages.json`.
+2. `python tools/sync_pages.py --bump` — bumps `?v=`, regenerates the head/script blocks, sitemap and CSP hash, and runs the checks (links, versions, data ids).
+3. Test locally, then `git add -A && git commit && git push origin main` (deploy is automatic).
 
 ## Placeholders / not built
 Payments (`checkout.js` → `BW.checkout.createSession()` stub), product & builder data and prices, contact form and newsletter (simulated), legal copy, accounts/subscriptions, admin. See `../notes/open-questions-for-founder.md`.
