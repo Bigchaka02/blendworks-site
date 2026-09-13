@@ -19,6 +19,7 @@ See `../06-deployment/README.md` — domain availability, hosting options with a
 | Want to change… | Edit |
 |---|---|
 | Products, prices, stock, ingredients, badges, colours | `assets/js/data/products.js` (one array; every page reads it) |
+| Builder ingredients, capsule sizes/counts, scoop/box sizes, pricing formula | `assets/js/data/ingredients.js` |
 | Colours, fonts, spacing, animations | `assets/css/styles.css` (tokens at the top) |
 | Header/footer links, icons, cart drawer, search overlay, toasts | `assets/js/site.js` |
 | Cart behaviour (limits, storage key) | `assets/js/cart.js` |
@@ -31,13 +32,15 @@ See `../06-deployment/README.md` — domain availability, hosting options with a
 ## Structure
 ```
 05-website/
-├─ index.html · shop.html · product.html?id=<slug> · cart.html · checkout.html
+├─ index.html · shop.html · product.html?id=<slug> · build.html?step=1|2|3 · cart.html · checkout.html
 ├─ about.html · mission.html · contact.html · terms.html · privacy.html · 404.html
 └─ assets/
    ├─ css/styles.css              design system + all page styles (dark theme)
    ├─ img/                        logo, icon, favicon (SVG)
    └─ js/
       ├─ data/products.js         PLACEHOLDER catalog (window.BW.products)
+      ├─ data/ingredients.js      builder ingredients + sizes + pricing (BW.builder)
+      ├─ build.js                 Build-your-own: steps, ratio slider, artwork, custom cart items
       ├─ cart.js                  localStorage cart store (BW.cart) + "bw:cart" events
       ├─ site.js                  shell: header, footer, cart drawer, search (Ctrl+K), toasts, reveal, product artwork
       ├─ shop.js                  grid, search, filters, sort, add-to-cart (also provides BW.productCard)
@@ -48,7 +51,7 @@ Global namespace: `window.BW` (`BW.products`, `BW.cart`, `BW.checkout`, `BW.art`
 ## What is placeholder (and where the hook is)
 | Feature | State | Hook |
 |---|---|---|
-| **Build your own** button (shop top-right, hero, footer) | Disconnected — shows a "coming soon" toast | `[data-build]` handler in `site.js` → `initBuildButtons()` |
+| **Build your own** (`/build`) | **Live** — 3-step builder: format → size → 10%-step ratio slider; custom blends go into the cart. Capacities/sizes/prices are placeholders | `build.html`, `assets/js/build.js`, `assets/js/data/ingredients.js` |
 | **Checkout / payments** | UI + cart validation + summary maths real; no provider | `BW.checkout.createSession()` in `checkout.js`; `checkout.html` |
 | **Product catalog** | 12 placeholder blends with placeholder prices/stock | `assets/js/data/products.js` |
 | **Contact form** | Simulated submit, nothing sent | `contact.js` (TODO: form/email service) |
@@ -78,3 +81,6 @@ Motion is always on (the founder removed the Full/Calm toggle on 2026-09-13; `pr
 Where the pieces live: `motion.js` (engine + hooks exposed as `BW.motion.*`, called from other scripts through `BW.fx(name, …)` so every call is a safe no-op without GSAP), `home.js` (home scenes), `shop.js` (cards + shared add-to-cart flow + shop filters), `product.js`, `cart-page.js`, `checkout.js`, `contact.js`. `styles.css` holds only static states and cheap decorative loops (orbits, mesh, glow, shimmer) — one motion implementation, no CSS/JS double-driving. A one-line inline script in each `<head>` shows a dark cover until the curtain takes over, so there is no flash between pages.
 
 **Code hygiene pass (2026-09-13):** CSS 54 KB → 44 KB (fix sections folded into base rules, dead rules and duplicate media queries removed), site.js 28 KB → 20 KB (unused icons, baseline IntersectionObserver/tilt/keyframe fallbacks removed), motion.js 18 KB → 15 KB (preference machinery and cursor code removed). Asset links carry `?v=` cache-busting — bump it when you change CSS/JS.
+
+## Build-your-own (added 2026-09-13)
+`/build` walks through **Format** (capsules or powder) → **Size** (capsule size 0/00/000 + 30/60/90/120 capsules, or 5/10/15 g scoop + 15/30/60 servings) → **Ratios**: pick 2–6 ingredients, then drag the dividers of a capsule-shaped bar (10 % snaps, keyboard arrows work) while the capsule/tub artwork, per-unit mg table and price update live. "Reset to even split", optional blend name, then **Add to cart** creates a custom line item (`BW.cart.addCustom`) whose id encodes the recipe, so identical blends merge. Steps are mirrored in `?step=` (back button works) and the draft persists in `localStorage.bw_build_v1`. Safety guard: any ingredient with `maxMgPerUnit` (caffeine, 200 mg) blocks Add to cart when exceeded. All numbers in `ingredients.js` are placeholders.
