@@ -4,9 +4,12 @@ A complete, dependency-free storefront: browse in-stock capsule and powder blend
 
 **Status (2026-09-12):** running locally, ready to deploy as-is. Payments, the Blend Builder, the contact-form backend, the newsletter and real product data are intentionally placeholders (see "What is placeholder").
 
+## Live
+https://blendworks.fit — Cloudflare Worker `blendworks-site`, deployed automatically from the private GitHub repo on every push to `main` (`wrangler.jsonc` serves this folder as static assets; `.assetsignore` keeps config/docs/.git out of the upload). Internal links use clean URLs (`shop`, `product?id=…`), matching Workers' HTML handling.
+
 ## Run it
 - **Simplest:** double-click `index.html` (everything is relative; only the Google Fonts need internet).
-- **Local server (recommended):** from the `QwenFolder` root run `python -m http.server 8765` and open `http://localhost:8765/05-website/` — or use the `static-preview` launch config in `.claude/launch.json`.
+- **Local server (recommended):** from the `QwenFolder` root run `python serve.py` and open `http://localhost:8765/05-website/` (serve.py resolves clean URLs like production) — or use the `static-preview` launch config in `.claude/launch.json`.
 
 ## Deploy it (minutes, no build step)
 Source of truth: private GitHub repo **Bigchaka02/blendworks-site** (this folder is the working copy; `git push` on `main` triggers the Cloudflare Pages deploy once connected).
