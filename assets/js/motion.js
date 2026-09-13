@@ -153,6 +153,8 @@
   M.overlayOpen = function (panel) { gsap.fromTo(panel, { y: -18, scale: 0.97, autoAlpha: 0 }, { y: 0, scale: 1, autoAlpha: 1, duration: 0.45 }); };
   M.resultsIn = function (root) { gsap.from($$("a", root), { y: 10, autoAlpha: 0, duration: 0.35, stagger: 0.04, ease: "power2.out" }); };
   M.pop = function (el) { gsap.from(el, { y: 16, autoAlpha: 0, duration: 0.5 }); };
+  M.stepOut = function (el, done) { return gsap.to(el, { x: -28, autoAlpha: 0, duration: 0.28, ease: "power2.in", onComplete: function () { gsap.set(el, { clearProps: "all" }); done(); } }); };
+  M.stepIn = function (el) { gsap.from(el, { x: 28, autoAlpha: 0, duration: 0.55, clearProps: "all" }); gsap.from($$(".fmt, .opt, .ratio-card, .blend-preview", el), { y: 24, autoAlpha: 0, duration: 0.7, stagger: 0.07, clearProps: "all" }); };
   M.flyToCart = function (btn, art) {
     var target = $("[data-open-cart]"); if (!target) return;
     var src = art || btn, a = src.getBoundingClientRect(), b = target.getBoundingClientRect();

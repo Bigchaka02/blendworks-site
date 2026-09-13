@@ -67,7 +67,7 @@
   };
 
   /* ---------- header & footer ---------- */
-  var NAV = [["./", "Home", "home"], ["shop", "Shop", "shop"], ["about", "About", "about"], ["mission", "Mission", "mission"], ["contact", "Contact", "contact"]];
+  var NAV = [["./", "Home", "home"], ["shop", "Shop", "shop"], ["build", "Build", "build"], ["about", "About", "about"], ["mission", "Mission", "mission"], ["contact", "Contact", "contact"]];
   var LOGO = '<img src="assets/img/blendworks-logo-horizontal-dark.svg" alt="BlendWorks">';
   function navLinks() {
     var page = document.body.dataset.page;
@@ -93,7 +93,7 @@
     host.innerHTML = '<div class="container"><div class="footer-grid"><div class="footer-brand">' + LOGO +
       "<p>Custom supplement capsules and powders, made to order. Every milligram on the label — nothing hidden.</p>" +
       '<form class="newsletter" data-newsletter><input class="input" type="email" placeholder="Email for launch updates" aria-label="Email" required><button class="btn btn-secondary btn-sm" type="submit">Join</button></form></div>' +
-      '<div><h4>Shop</h4><ul><li><a href="shop?type=capsule">Capsule blends</a></li><li><a href="shop?type=powder">Powder blends</a></li><li><a href="shop">All products</a></li><li><a href="#" data-build>Build your own</a></li></ul></div>' +
+      '<div><h4>Shop</h4><ul><li><a href="shop?type=capsule">Capsule blends</a></li><li><a href="shop?type=powder">Powder blends</a></li><li><a href="shop">All products</a></li><li><a href="build">Build your own</a></li></ul></div>' +
       '<div><h4>Company</h4><ul><li><a href="about">About</a></li><li><a href="mission">Mission &amp; goals</a></li><li><a href="contact">Contact</a></li><li><a href="contact#faq">FAQ</a></li></ul></div>' +
       '<div><h4>Legal</h4><ul><li><a href="terms">Terms of service</a></li><li><a href="privacy">Privacy policy</a></li><li><a href="contact#report">Report a problem</a></li></ul></div></div>' +
       '<div class="footer-bottom"><span>&copy; ' + new Date().getFullYear() + " BlendWorks. All rights reserved.</span><span>Made to order &middot; Ships within the US (placeholder)</span></div>" +
@@ -124,9 +124,9 @@
     });
   };
   BW.cartLineHtml = function (l, big) {
-    var p = l.product, href = "product?id=" + p.slug;
+    var p = l.product, href = p.custom ? "build" : "product?id=" + p.slug;
     return '<div class="cart-item" data-line="' + p.id + '"><a class="thumb" href="' + href + '">' + BW.art.product(p, { suffix: big ? "-pg" : "-dr" }) + "</a>" +
-      '<div><a class="name" href="' + href + '">' + BW.escapeHtml(p.name) + '</a><div class="sub">' + BW.typeLabel(p) + " &middot; " + BW.formatPrice(p.price) + ' each</div><div style="margin-top:.5rem">' + BW.qtyControl(p.id, l.qty, !big) + "</div></div>" +
+      '<div><a class="name" href="' + href + '">' + BW.escapeHtml(p.name) + '</a><div class="sub">' + (p.custom ? "Custom " + BW.typeLabel(p).toLowerCase() : BW.typeLabel(p)) + " &middot; " + BW.formatPrice(p.price) + " each</div>" + (p.custom ? '<div class="sub">' + BW.escapeHtml(p.tagline) + " &middot; " + BW.escapeHtml(p.servingSize) + "</div>" : "") + '<div style="margin-top:.5rem">' + BW.qtyControl(p.id, l.qty, !big) + "</div></div>" +
       '<div class="controls"><div class="line-price num">' + BW.formatPrice(l.lineTotal) + '</div><button class="remove" data-remove="' + p.id + '">Remove</button></div></div>';
   };
   BW.bindCartLines = function (root) {
@@ -206,10 +206,6 @@
 
   /* ---------- misc: hover enhancements, disconnected builder button, boot ---------- */
   BW.enhance = function (root) { fx("cards", root); fx("magnetic", root); };
-  document.addEventListener("click", function (e) {
-    // TODO(builder): connect to the Blend Builder when it exists. Intentionally disconnected for now.
-    if (e.target.closest("[data-build]")) { e.preventDefault(); BW.toast("The Blend Builder is coming soon — you'll design your own formula right here."); }
-  });
   document.addEventListener("DOMContentLoaded", function () {
     if (!BW.motion) document.documentElement.classList.remove("curtain-pending");
     renderHeader(); renderFooter(); buildDrawer(); buildSearch(); updateBadge(false); BW.enhance(document);

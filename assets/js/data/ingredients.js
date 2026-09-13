@@ -1,0 +1,39 @@
+/* Build-your-own ingredient list + size/pricing tables (PLACEHOLDER numbers — replace when formulas/pricing are final).
+   costPerGram = wholesale USD per gram of material; prices = base(size) + sum(grams * costPerGram * MARKUP). */
+window.BW = window.BW || {};
+BW.builder = {
+  ingredients: [
+    { id: "creatine",    name: "Creatine monohydrate",   short: "Creatine",     role: "Strength & power",       color: "#56B4F2", costPerGram: 0.02 },
+    { id: "theanine",    name: "L-Theanine",             short: "L-Theanine",   role: "Calm focus",             color: "#B18CF5", costPerGram: 0.10 },
+    { id: "caffeine",    name: "Caffeine (anhydrous)",   short: "Caffeine",     role: "Energy & alertness",     color: "#5DD6C0", costPerGram: 0.05, maxMgPerUnit: 200, stimulant: true },
+    { id: "citrulline",  name: "L-Citrulline",           short: "L-Citrulline", role: "Pump & endurance",       color: "#F28C6B", costPerGram: 0.03 },
+    { id: "betaalanine", name: "Beta-alanine",           short: "Beta-alanine", role: "Muscular endurance",     color: "#F7B955", costPerGram: 0.03 },
+    { id: "tyrosine",    name: "L-Tyrosine",             short: "L-Tyrosine",   role: "Focus under stress",     color: "#F472B6", costPerGram: 0.04 },
+    { id: "taurine",     name: "Taurine",                short: "Taurine",      role: "Endurance & hydration",  color: "#22D3EE", costPerGram: 0.02 },
+    { id: "magnesium",   name: "Magnesium bisglycinate", short: "Magnesium",    role: "Recovery & sleep",       color: "#818CF8", costPerGram: 0.03 },
+    { id: "ashwagandha", name: "Ashwagandha extract",    short: "Ashwagandha",  role: "Stress & recovery",      color: "#A3E635", costPerGram: 0.20 },
+    { id: "rhodiola",    name: "Rhodiola rosea extract", short: "Rhodiola",     role: "Stamina & mood",         color: "#FCD34D", costPerGram: 0.15 },
+    { id: "glycine",     name: "Glycine",                short: "Glycine",      role: "Sleep quality",          color: "#A78BFA", costPerGram: 0.02 },
+    { id: "vitaminc",    name: "Vitamin C",              short: "Vitamin C",    role: "Daily support",          color: "#2DD4BF", costPerGram: 0.02 }
+  ],
+  capsuleSizes: [           // capacity = approximate powder fill per capsule
+    { id: "0",   label: "Size 0",   capacityMg: 500,  note: "Small · easiest to swallow" },
+    { id: "00",  label: "Size 00",  capacityMg: 750,  note: "Standard · most blends" },
+    { id: "000", label: "Size 000", capacityMg: 1000, note: "Large · maximum dose per capsule" }
+  ],
+  capsuleCounts: [30, 60, 90, 120],
+  servingSizesG: [5, 10, 15],
+  boxServings: [15, 30, 60],
+  pricing: {
+    MARKUP: 3,
+    capsuleBase: { 30: 19.99, 60: 24.99, 90: 29.99, 120: 34.99 },
+    powderBase:  { 15: 17.99, 30: 24.99, 60: 34.99 }
+  },
+  STEP: 10, MIN_INGREDIENTS: 2, MAX_INGREDIENTS: 6,
+  presets: {   // starting recipe per format (applied until the user customises the ingredients)
+    capsule: { ingredients: ["creatine", "theanine", "caffeine"], pct: { creatine: 50, theanine: 30, caffeine: 20 } },
+    powder:  { ingredients: ["creatine", "citrulline", "betaalanine"], pct: { creatine: 50, citrulline: 30, betaalanine: 20 } }
+  },
+  defaults: { format: null, capsuleSize: "00", capsules: 60, servingG: 10, servings: 30, ingredients: ["creatine", "theanine", "caffeine"], pct: { creatine: 50, theanine: 30, caffeine: 20 }, name: "", customised: false }
+};
+BW.builder.get = function (id) { return BW.builder.ingredients.find(function (i) { return i.id === id; }); };
