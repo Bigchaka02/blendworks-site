@@ -1,6 +1,11 @@
-// Cloudflare Workers static-assets config — lets "npx wrangler deploy" publish this folder as-is.
+// Cloudflare Workers static-assets config — "npx wrangler deploy" (run by Workers Builds on every push to main)
+// publishes this folder as-is and attaches the custom domains below (DNS + certificates are created automatically).
 {
   "name": "blendworks-site",
   "compatibility_date": "2026-09-13",
-  "assets": { "directory": "./", "not_found_handling": "404-page", "html_handling": "auto-trailing-slash" }
+  "assets": { "directory": "./", "not_found_handling": "404-page", "html_handling": "auto-trailing-slash" },
+  "routes": [
+    { "pattern": "blendworks.fit", "custom_domain": true },
+    { "pattern": "www.blendworks.fit", "custom_domain": true }
+  ]
 }
