@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://blendworks.fit/</loc></url>
-  <url><loc>https://blendworks.fit/shop.html</loc></url>
-  <url><loc>https://blendworks.fit/about.html</loc></url>
-  <url><loc>https://blendworks.fit/mission.html</loc></url>
-  <url><loc>https://blendworks.fit/contact.html</loc></url>
-  <url><loc>https://blendworks.fit/terms.html</loc></url>
-  <url><loc>https://blendworks.fit/privacy.html</loc></url>
+  <url><loc>https://blendworks.fit/shop</loc></url>
+  <url><loc>https://blendworks.fit/about</loc></url>
+  <url><loc>https://blendworks.fit/mission</loc></url>
+  <url><loc>https://blendworks.fit/contact</loc></url>
+  <url><loc>https://blendworks.fit/terms</loc></url>
+  <url><loc>https://blendworks.fit/privacy</loc></url>
 </urlset>

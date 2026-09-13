@@ -9,7 +9,7 @@
   };
   BW.productCard = function (p, opts) {
     opts = opts || {};
-    var href = "product.html?id=" + p.slug;
+    var href = "product?id=" + p.slug;
     return '<article class="product-card" data-id="' + p.id + '" data-flip-id="' + p.id + '" style="--c1:' + p.colors[0] + '">' +
       '<a class="art" href="' + href + '" aria-label="' + BW.escapeHtml(p.name) + '"><div class="badges">' + BW.badges(p) + '</div><span class="type-tag">' + (p.type === "capsule" ? I.capsule + " Capsules" : I.powder + " Powder") + "</span>" + BW.art.product(p, { suffix: opts.suffix || "-card" }) + "</a>" +
       '<div class="body"><h3><a href="' + href + '">' + (opts.q ? BW.highlight(p.name, opts.q) : BW.escapeHtml(p.name)) + '</a></h3><p class="tagline">' + BW.escapeHtml(p.tagline) + "</p>" +
@@ -23,7 +23,7 @@
     BW.flyToCart(btn);
     var label = btn.innerHTML; btn.classList.add("is-added"); btn.innerHTML = I.check + " Added";
     setTimeout(function () { btn.classList.remove("is-added"); btn.innerHTML = label; }, 1400);
-    var t = BW.toast(qty + " × " + p.name + " added to your cart.", { link: { href: "cart.html", label: "View cart" } });
+    var t = BW.toast(qty + " × " + p.name + " added to your cart.", { link: { href: "cart", label: "View cart" } });
     $("a", t).addEventListener("click", function (e) { e.preventDefault(); BW.openCart(); });
   };
   BW.bindAddButtons = function (root) {

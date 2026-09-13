@@ -3,12 +3,12 @@
   var $ = BW.$, I = BW.icons;
   document.addEventListener("bw:ready", function () {
     var root = $("[data-product]"), p = BW.getProduct(new URLSearchParams(location.search).get("id") || "");
-    if (!p) { root.innerHTML = '<div class="empty-state">' + I.bag + '<h2>Blend not found</h2><p>That product may have been renamed or removed.</p><a class="btn btn-primary" href="shop.html">Back to the shop</a></div>'; return; }
+    if (!p) { root.innerHTML = '<div class="empty-state">' + I.bag + '<h2>Blend not found</h2><p>That product may have been renamed or removed.</p><a class="btn btn-primary" href="shop">Back to the shop</a></div>'; return; }
     document.title = p.name + " — BlendWorks";
     var isCap = p.type === "capsule", unit = isCap ? "bottle" : "tub";
     var how = isCap ? "Take " + BW.escapeHtml(p.servingSize) + " with water" + (p.stimFree ? ", any time of day." : " in the morning or before training. Contains caffeine — avoid within 6 hours of sleep.")
                     : "Mix " + BW.escapeHtml(p.servingSize) + " into 300–500 ml of water" + (p.stimFree ? ". Stimulant-free — suitable for evening sessions." : " 20 minutes before training. Contains caffeine.");
-    root.innerHTML = '<div class="breadcrumb"><a href="index.html">Home</a><span>/</span><a href="shop.html">Shop</a><span>/</span><a href="shop.html?type=' + p.type + '">' + BW.typeLabel(p) + 's</a><span>/</span><span>' + BW.escapeHtml(p.name) + "</span></div>" +
+    root.innerHTML = '<div class="breadcrumb"><a href="./">Home</a><span>/</span><a href="shop">Shop</a><span>/</span><a href="shop?type=' + p.type + '">' + BW.typeLabel(p) + 's</a><span>/</span><span>' + BW.escapeHtml(p.name) + "</span></div>" +
       '<div class="product-layout"><div class="product-stage" style="--c1:' + p.colors[0] + '" data-stage>' + BW.art.product(p, { suffix: "-detail" }) + "</div>" +
       '<div class="product-info"><div class="row" style="gap:.4rem;margin-bottom:.8rem">' + BW.badges(p) + '<span class="badge" style="background:var(--surface);color:var(--muted);border-color:var(--border)">' + (isCap ? I.capsule : I.powder) + " " + BW.typeLabel(p) + "</span></div>" +
       "<h1>" + BW.escapeHtml(p.name) + '</h1><p class="lead">' + BW.escapeHtml(p.tagline) + "</p>" +

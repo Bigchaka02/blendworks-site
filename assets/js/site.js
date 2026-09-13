@@ -67,7 +67,7 @@
   };
 
   /* ---------- header & footer ---------- */
-  var NAV = [["index.html", "Home", "home"], ["shop.html", "Shop", "shop"], ["about.html", "About", "about"], ["mission.html", "Mission", "mission"], ["contact.html", "Contact", "contact"]];
+  var NAV = [["./", "Home", "home"], ["shop", "Shop", "shop"], ["about", "About", "about"], ["mission", "Mission", "mission"], ["contact", "Contact", "contact"]];
   var LOGO = '<img src="assets/img/blendworks-logo-horizontal-dark.svg" alt="BlendWorks">';
   function navLinks() {
     var page = document.body.dataset.page;
@@ -76,11 +76,11 @@
   function renderHeader() {
     var host = $("#site-header"); if (!host) return;
     host.className = "site-header";
-    host.innerHTML = '<div class="container"><a class="logo" href="index.html" aria-label="BlendWorks home">' + LOGO + '</a><nav class="nav" aria-label="Primary">' + navLinks() + '</nav>' +
+    host.innerHTML = '<div class="container"><a class="logo" href="./" aria-label="BlendWorks home">' + LOGO + '</a><nav class="nav" aria-label="Primary">' + navLinks() + '</nav>' +
       '<div class="header-actions"><button class="btn-icon" data-open-search aria-label="Search products" title="Search (Ctrl+K)">' + I.search + '</button>' +
       '<button class="btn-icon cart-btn" data-open-cart aria-label="Open cart">' + I.cart + '<span class="cart-count" data-cart-count>0</span></button>' +
-      '<a class="btn btn-primary btn-sm" href="shop.html" style="margin-left:.4rem">Shop blends</a><button class="btn-icon menu-btn" data-open-menu aria-label="Open menu">' + I.menu + "</button></div></div>";
-    var mm = document.body.appendChild(el("div", "mobile-menu", '<div class="close-row">' + LOGO + '<button class="btn-icon" data-close-menu aria-label="Close menu">' + I.close + "</button></div><nav>" + navLinks() + '<a href="cart.html">Cart</a></nav><a class="btn btn-primary btn-lg" href="shop.html">Shop blends</a>'));
+      '<a class="btn btn-primary btn-sm" href="shop" style="margin-left:.4rem">Shop blends</a><button class="btn-icon menu-btn" data-open-menu aria-label="Open menu">' + I.menu + "</button></div></div>";
+    var mm = document.body.appendChild(el("div", "mobile-menu", '<div class="close-row">' + LOGO + '<button class="btn-icon" data-close-menu aria-label="Close menu">' + I.close + "</button></div><nav>" + navLinks() + '<a href="cart">Cart</a></nav><a class="btn btn-primary btn-lg" href="shop">Shop blends</a>'));
     var toggle = function (open) { mm.classList.toggle("is-open", open); mm.setAttribute("aria-hidden", String(!open)); };
     toggle(false);
     $("[data-open-menu]", host).addEventListener("click", function () { toggle(true); });
@@ -93,9 +93,9 @@
     host.innerHTML = '<div class="container"><div class="footer-grid"><div class="footer-brand">' + LOGO +
       "<p>Custom supplement capsules and powders, made to order. Every milligram on the label — nothing hidden.</p>" +
       '<form class="newsletter" data-newsletter><input class="input" type="email" placeholder="Email for launch updates" aria-label="Email" required><button class="btn btn-secondary btn-sm" type="submit">Join</button></form></div>' +
-      '<div><h4>Shop</h4><ul><li><a href="shop.html?type=capsule">Capsule blends</a></li><li><a href="shop.html?type=powder">Powder blends</a></li><li><a href="shop.html">All products</a></li><li><a href="#" data-build>Build your own</a></li></ul></div>' +
-      '<div><h4>Company</h4><ul><li><a href="about.html">About</a></li><li><a href="mission.html">Mission &amp; goals</a></li><li><a href="contact.html">Contact</a></li><li><a href="contact.html#faq">FAQ</a></li></ul></div>' +
-      '<div><h4>Legal</h4><ul><li><a href="terms.html">Terms of service</a></li><li><a href="privacy.html">Privacy policy</a></li><li><a href="contact.html#report">Report a problem</a></li></ul></div></div>' +
+      '<div><h4>Shop</h4><ul><li><a href="shop?type=capsule">Capsule blends</a></li><li><a href="shop?type=powder">Powder blends</a></li><li><a href="shop">All products</a></li><li><a href="#" data-build>Build your own</a></li></ul></div>' +
+      '<div><h4>Company</h4><ul><li><a href="about">About</a></li><li><a href="mission">Mission &amp; goals</a></li><li><a href="contact">Contact</a></li><li><a href="contact#faq">FAQ</a></li></ul></div>' +
+      '<div><h4>Legal</h4><ul><li><a href="terms">Terms of service</a></li><li><a href="privacy">Privacy policy</a></li><li><a href="contact#report">Report a problem</a></li></ul></div></div>' +
       '<div class="footer-bottom"><span>&copy; ' + new Date().getFullYear() + " BlendWorks. All rights reserved.</span><span>Made to order &middot; Ships within the US (placeholder)</span></div>" +
       '<p class="disclaimer">These statements have not been evaluated by the Food and Drug Administration. These products are not intended to diagnose, treat, cure, or prevent any disease. For adults 18+. Consult a physician before use if you are pregnant, nursing, taking medication, or have a medical condition.</p></div>';
     var nl = $("[data-newsletter]", host);
@@ -124,7 +124,7 @@
     });
   };
   BW.cartLineHtml = function (l, big) {
-    var p = l.product, href = "product.html?id=" + p.slug;
+    var p = l.product, href = "product?id=" + p.slug;
     return '<div class="cart-item" data-line="' + p.id + '"><a class="thumb" href="' + href + '">' + BW.art.product(p, { suffix: big ? "-pg" : "-dr" }) + "</a>" +
       '<div><a class="name" href="' + href + '">' + BW.escapeHtml(p.name) + '</a><div class="sub">' + BW.typeLabel(p) + " &middot; " + BW.formatPrice(p.price) + ' each</div><div style="margin-top:.5rem">' + BW.qtyControl(p.id, l.qty, !big) + "</div></div>" +
       '<div class="controls"><div class="line-price num">' + BW.formatPrice(l.lineTotal) + '</div><button class="remove" data-remove="' + p.id + '">Remove</button></div></div>';
@@ -137,13 +137,13 @@
     var bd = document.body.appendChild(el("div", "drawer-backdrop")); bd.setAttribute("data-close-cart", "");
     var d = document.body.appendChild(el("aside", "cart-drawer", '<header><h3>Your cart <span class="muted" style="font-size:.9rem;font-weight:500" data-drawer-count></span></h3><button class="btn-icon" data-close-cart aria-label="Close cart">' + I.close + "</button></header>" +
       '<div class="cart-items" data-drawer-items></div><div class="cart-footer" data-drawer-footer hidden><div class="line"><span>Subtotal</span><span class="num" data-drawer-subtotal></span></div><div class="line"><span>Shipping &amp; tax</span><span>Calculated at checkout</span></div>' +
-      '<a class="btn btn-secondary btn-block" href="cart.html">View cart</a><a class="btn btn-primary btn-block" href="checkout.html">Checkout ' + I.arrow + "</a></div>"));
+      '<a class="btn btn-secondary btn-block" href="cart">View cart</a><a class="btn btn-primary btn-block" href="checkout">Checkout ' + I.arrow + "</a></div>"));
     d.setAttribute("aria-label", "Shopping cart"); d.setAttribute("aria-hidden", "true");
     var items = $("[data-drawer-items]", d), foot = $("[data-drawer-footer]", d), isOpen = false;
     function render() {
       var lines = BW.cart.lines();
       foot.hidden = !lines.length;
-      if (!lines.length) { items.innerHTML = '<div class="cart-empty">' + I.bag + '<p><b>Your cart is empty.</b></p><p>Browse the in-stock capsule and powder blends.</p><a class="btn btn-primary" href="shop.html">Shop blends</a></div>'; return; }
+      if (!lines.length) { items.innerHTML = '<div class="cart-empty">' + I.bag + '<p><b>Your cart is empty.</b></p><p>Browse the in-stock capsule and powder blends.</p><a class="btn btn-primary" href="shop">Shop blends</a></div>'; return; }
       items.innerHTML = lines.map(function (l) { return BW.cartLineHtml(l, false); }).join("");
       $("[data-drawer-subtotal]", d).textContent = BW.formatPrice(BW.cart.subtotal());
       BW.bindCartLines(items);
@@ -186,8 +186,8 @@
       if (!q.trim()) { results.innerHTML = '<div class="empty">Try "focus", "creatine", "stim-free" or "powder".</div>'; return; }
       if (!list.length) { results.innerHTML = '<div class="empty">No blends match "' + BW.escapeHtml(q) + '".</div>'; return; }
       results.innerHTML = list.map(function (p) {
-        return '<a href="product.html?id=' + p.slug + '"><span class="thumb" style="background:linear-gradient(135deg,' + p.colors[0] + "," + p.colors[1] + ')"></span><span><div>' + BW.highlight(p.name, q) + '</div><div class="meta">' + BW.typeLabel(p) + " &middot; " + p.goals.join(", ") + '</div></span><span class="price num">' + BW.formatPrice(p.price) + "</span></a>";
-      }).join("") + '<a href="shop.html?q=' + encodeURIComponent(q) + '" style="justify-content:center;color:var(--sky-light);font-weight:600">See all results in the shop ' + I.arrow + "</a>";
+        return '<a href="product?id=' + p.slug + '"><span class="thumb" style="background:linear-gradient(135deg,' + p.colors[0] + "," + p.colors[1] + ')"></span><span><div>' + BW.highlight(p.name, q) + '</div><div class="meta">' + BW.typeLabel(p) + " &middot; " + p.goals.join(", ") + '</div></span><span class="price num">' + BW.formatPrice(p.price) + "</span></a>";
+      }).join("") + '<a href="shop?q=' + encodeURIComponent(q) + '" style="justify-content:center;color:var(--sky-light);font-weight:600">See all results in the shop ' + I.arrow + "</a>";
       fx("resultsIn", results);
     }
     var open = function () { ov.classList.add("is-open"); ov.setAttribute("aria-hidden", "false"); render(); fx("overlayOpen", $(".search-panel", ov)); setTimeout(function () { input.focus(); }, 50); };
