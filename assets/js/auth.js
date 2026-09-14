@@ -85,22 +85,22 @@
   }));
 
   /* ---------- pages ---------- */
-  const authPageSetup = () => {   // already signed in? go where the user was headed; keep ?next= on the switch link
-    if (signedIn()) { location.replace(BW.auth.nextUrl()); return false; }
+  const authPageSetup = async () => {   // already signed in (verified, not just the flag cookie)? go where the user was headed
+    if (signedIn() && await BW.auth.me()) { location.replace(BW.auth.nextUrl()); return false; }
     const sw = $("[data-switch-link]");
     if (sw) sw.href += location.search;
     return true;
   };
-  function signupPage(form) {
-    if (!authPageSetup()) return;
+  async function signupPage(form) {
+    if (!(await authPageSetup())) return;
     bindForm(form, async (fd) => {
       if (fd.get("password") !== fd.get("confirm")) throw new Error("The two passwords don't match.");
       await BW.auth.signup({ name: fd.get("name"), email: fd.get("email"), password: fd.get("password") });
       location.href = BW.auth.nextUrl();
     }, "Creating your account…");
   }
-  function loginPage(form) {
-    if (!authPageSetup()) return;
+  async function loginPage(form) {
+    if (!(await authPageSetup())) return;
     bindForm(form, async (fd) => {
       await BW.auth.login({ email: fd.get("email"), password: fd.get("password") });
       location.href = BW.auth.nextUrl();
