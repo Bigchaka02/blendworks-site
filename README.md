@@ -3,7 +3,7 @@
 Static, dependency-free storefront with a GSAP motion layer. This folder is the git working copy of the private repo **Bigchaka02/blendworks-site**; every push to `main` deploys to Cloudflare (see `../06-deployment/README.md`).
 
 ## Pages (clean URLs; `.html` is redirected by the host)
-`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (placeholder) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html` (served by the host for any unknown path, at any depth)
+`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (placeholder) · `/signup` · `/login` · `/account` (profile, password, saved blends) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html` (served by the host for any unknown path, at any depth)
 
 ## Structure
 ```
@@ -11,7 +11,9 @@ index.html … 404.html            pages: hand-written <body>; the <head> and <s
                                  <!-- bw:head --> / <!-- bw:scripts --> markers are GENERATED (see tools/)
 tools/pages.json                 per-page title, description, robots, data files, GSAP plugins, page scripts, ?v= version
 tools/sync_pages.py              regenerates the marked blocks, sitemap.xml and the CSP hash; --bump / --check
-wrangler.jsonc  .assetsignore    Cloudflare Worker static-assets config / upload exclusions (tools/ is not deployed)
+worker/index.js                  the API (Cloudflare Worker) behind /api/*: accounts, sessions, saved blends — route table at its top
+worker/schema.sql                D1 database "blendworks" schema (already applied)
+wrangler.jsonc  .assetsignore    Worker config: main + static assets + D1 binding / upload exclusions (tools/, worker/ are not served)
 _headers  robots.txt  sitemap.xml
 assets/css/styles.css            design system + all page styles (dark theme); §8 = builder, §9 = keyframes/responsive
 assets/img/                      logo + favicon (sources in ../03-brand/logo)
@@ -22,9 +24,10 @@ assets/js/
   site.js                        shell: icon sprite, product artwork, header/footer/menu, cart drawer + line items,
                                  product cards + add-to-cart, Ctrl+K search, toasts, BW.fx()
   motion.js                      GSAP 3.13 + Lenis layer (BW.motion): curtain/transitions, reveals, tilt/glare, hooks
+  auth.js                        BW.auth API client + signed-in header state + the sign-up / login / account pages
   shop.js product.js build.js home.js cart-page.js checkout.js contact.js   page scripts
 ```
-Script order on every page: `data/products.js`, [`data/ingredients.js`], `cart.js`, GSAP core + ScrollTrigger, [SplitText on home/mission], [Flip on shop], Lenis, `site.js`, `motion.js`, page script. Global namespace `window.BW`. Shared UI motion goes through `BW.fx(name, …)` (a no-op if the CDN fails, so the site degrades to static but fully usable); page-level choreography in `home.js`/`product.js` calls GSAP directly behind an `if (BW.motion)` guard (decision D16).
+Script order on every page: `data/products.js`, [`data/ingredients.js`], `cart.js`, GSAP core + ScrollTrigger, [SplitText on home/mission], [Flip on shop], Lenis, `site.js`, `motion.js`, `auth.js`, page script. Global namespace `window.BW`. Shared UI motion goes through `BW.fx(name, …)` (a no-op if the CDN fails, so the site degrades to static but fully usable); page-level choreography in `home.js`/`product.js` calls GSAP directly behind an `if (BW.motion)` guard (decision D16).
 
 ## Conventions
 - **Links and assets are root-absolute** (`/shop`, `/assets/…`) so the 404 page works at any depth. `python tools/sync_pages.py --check` fails on relative links.
@@ -36,8 +39,11 @@ Script order on every page: `data/products.js`, [`data/ingredients.js`], `cart.j
 ## Build your own (`/build`)
 Step 1 format (capsules/powder) → Step 2 size (capsule 0/00/000 × 30/60/90/120, or 5/10/15 g scoop × 15/30/60 servings) → Step 3 ingredients (2–6 chips) + ratio bar with dividers snapping to 10 % (drag or arrow keys), live capsule/tub artwork, per-unit mg table, price, "Reset to even split", optional name, Add to cart. Draft in `localStorage.bw_build_v1`; steps mirrored in `?step=`. Guard: caffeine ≤ 200 mg per unit. Custom cart items get id `custom-…` encoding the recipe and carry their product object inline.
 
+## Accounts (`/signup`, `/login`, `/account`)
+Email + password accounts served by `worker/index.js` on the same Worker, stored in D1 (`worker/schema.sql`). Passwords are PBKDF2-SHA256 (100k iterations, salted); sessions are HttpOnly cookies (30 days) stored hashed; a readable `bw_u=1` cookie tells the front end whether to call `/api/me`. State-changing calls must be same-origin JSON (CSRF), and D1-backed rate limits cover login, sign-up and password changes. The builder's "Save to my account" stores the recipe (`blends` table); the account page lists, reopens and deletes them. **Not yet:** email verification and password reset (need an email provider — Q29). Decision record: D25.
+
 ## Local development
-`python serve.py` from the workspace root → http://localhost:8765/ (serves this folder as the site root with clean URLs and the host's 404 behaviour). Port: first argument or `$PORT`.
+`python serve.py` from the workspace root → http://localhost:8765/ (serves this folder as the site root with clean URLs and the host's 404 behaviour). Port: first argument or `$PORT`. There is no local Worker (no Node/wrangler): `/api/*` returns 404 locally, which the front end treats as "signed out". To smoke-test the Worker before deploying, import it in the browser with an in-memory D1 stand-in (recipe in `../new_chat_instructions.txt` §5); cookie-dependent paths are checked live with curl after the deploy.
 
 ## Editing workflow
 1. Edit a page's body, CSS or JS. To change a title/description/robots/plugins, edit `tools/pages.json`.
@@ -45,4 +51,4 @@ Step 1 format (capsules/powder) → Step 2 size (capsule 0/00/000 × 30/60/90/12
 3. Test locally, then `git add -A && git commit && git push origin main` (deploy is automatic).
 
 ## Placeholders / not built
-Payments (`checkout.js` → `BW.checkout.createSession()` stub), product & builder data and prices, contact form and newsletter (simulated), legal copy, accounts/subscriptions, admin. See `../notes/open-questions-for-founder.md`.
+Payments (`checkout.js` → `BW.checkout.createSession()` stub; Stripe + PayPal chosen, D24), product & builder data and prices, contact form and newsletter (simulated), legal copy, email verification / password reset, order history, subscriptions, admin. See `../notes/open-questions-for-founder.md`.
