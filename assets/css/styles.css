@@ -17,7 +17,7 @@
   --sky: #56B4F2; --sky-deep: #2E93D9; --sky-light: #8ED0F9;
   --lav: #B18CF5; --lav-deep: #8B62E8; --lav-light: #CDB5FA;
   --mint: #5DD6C0; --amber: #F7B955; --coral: #F28C6B;
-  --sky-rgb: 86 180 242; --lav-rgb: 177 140 245; --mint-rgb: 93 214 192; --amber-rgb: 247 185 85;
+  --sky-rgb: 86 180 242; --lav-rgb: 177 140 245; --mint-rgb: 93 214 192; --amber-rgb: 247 185 85; --danger-rgb: 248 113 113;
   --success: #34D399; --warning: #FBBF24; --danger: #F87171;
   --grad: linear-gradient(90deg, var(--sky), var(--lav));
   --grad-diag: linear-gradient(135deg, var(--sky), var(--lav));
@@ -502,6 +502,34 @@ textarea.input { min-height: 140px; resize: vertical; }
 .facts .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .5rem; vertical-align: middle; }
 .blend-preview .facts { margin: 0; }
 
+/* ---------- 8b. Accounts: sign-up / login cards, account page, saved blends ---------- */
+.auth-wrap { max-width: 460px; margin-inline: auto; }
+.auth-card { padding: clamp(1.5rem, 4vw, 2.5rem); }
+.auth-card h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); }
+.auth-card .form-grid { grid-template-columns: 1fr; }
+.auth-foot { margin-top: 1.25rem; text-align: center; color: var(--muted); font-size: .92rem; }
+.auth-foot a, .check a { color: var(--sky-light); font-weight: 600; }
+.form-error { padding: .75rem 1rem; border-radius: var(--r-md); background: rgb(var(--danger-rgb) / .12); border: 1px solid rgb(var(--danger-rgb) / .35); color: #FCA5A5; font-size: .9rem; }
+.pw-field { position: relative; }
+.pw-field .input { padding-right: 4.6rem; }
+.pw-field .toggle { position: absolute; right: .6rem; bottom: .6rem; font-size: .8rem; font-weight: 600; color: var(--sky-light); padding: .3rem .5rem; border-radius: 6px; }
+.pw-field .toggle:hover { background: var(--surface-2); }
+.check { display: flex; gap: .6rem; align-items: flex-start; font-size: .9rem; color: var(--muted); }
+.check input { margin-top: .3rem; accent-color: var(--sky); }
+.field.end { justify-content: flex-end; }
+.account-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+.account-grid .full { grid-column: 1 / -1; }
+.account-grid .card h2 { font-size: 1.3rem; margin-bottom: 1rem; }
+.account-grid .card:hover { box-shadow: none; background: var(--surface); border-color: var(--border); }
+.card.danger { border-color: rgb(var(--danger-rgb) / .35); }
+.card.danger h2 { color: #FCA5A5; }
+.btn-danger { color: var(--text); background: rgb(var(--danger-rgb) / .18); border: 1px solid rgb(var(--danger-rgb) / .5); }
+.btn-danger:hover { background: rgb(var(--danger-rgb) / .32); }
+.blend-row { display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; padding: .9rem 1rem; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); }
+.blend-row .badge { text-transform: capitalize; }
+.btn-icon { position: relative; }
+.btn-icon.is-user::after { content: ""; position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
+
 /* ---------- 9. Keyframes & responsive ---------- */
 @keyframes shimmer { to { background-position: -300% 0; } }
 @keyframes drift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(6%, -4%) scale(1.08); } 100% { transform: translate(-4%, 6%) scale(.96); } }
@@ -525,7 +553,7 @@ textarea.input { min-height: 140px; resize: vertical; }
   .capsule-3d { grid-column: 1 / -1; justify-self: center; width: min(260px, 70%); margin: 1rem 0 2rem; }
   .float-card { position: static; width: 100%; }
 
-  .fmt-grid, .blend-preview { grid-template-columns: 1fr; }
+  .fmt-grid, .blend-preview, .account-grid, .blend-row { grid-template-columns: 1fr; }
   .opt-grid, .opt-grid.four { grid-template-columns: 1fr 1fr; }
   .ratio-track { height: 70px; } .ratio-handles, .ratio-handle { height: 94px; }
   .ratio-seg b { font-size: .8rem; } .ratio-seg span { font-size: .7rem; }
@@ -547,4 +575,7 @@ textarea.input { min-height: 140px; resize: vertical; }
   .form-grid { grid-template-columns: 1fr; }
   .buy-bar { display: flex; }
 }
-@media (max-width: 520px) { .stats, .hero-visual { grid-template-columns: 1fr; } }
+@media (max-width: 520px) {
+  .stats, .hero-visual { grid-template-columns: 1fr; }
+  .header-actions [data-account-link] { display: none; }   /* the mobile menu carries the account link */
+}

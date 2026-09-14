@@ -153,7 +153,7 @@
         <div class="legend" data-legend></div>
         <div class="issues" data-issues></div>
         <div class="row between ratio-actions">
-          <button type="button" class="btn btn-secondary" data-even>${I.arrowLeft} Reset to even split</button>
+          <div class="row gap-sm"><button type="button" class="btn btn-secondary" data-even>${I.arrowLeft} Reset to even split</button><button type="button" class="btn btn-secondary" data-save-blend>${I.save} Save to my account</button></div>
           <div class="row"><input class="input name-input" data-name placeholder="Name your blend (optional)" maxlength="40" value="${BW.escapeHtml(draft.name || "")}"><button type="button" class="btn btn-primary btn-lg" data-add-custom>Add to cart &middot; <span class="num" data-price></span></button></div>
         </div>
       </div>
@@ -251,6 +251,18 @@
       ingredients: ls.map((l) => [l.ing.name, `${fmt(l.mg)} mg`]), stock: 99, colors: [ls[0].ing.color, (ls[1] || ls[0]).ing.color] };
   }
 
+  async function saveToAccount(btn) {   // POST the recipe to the account API (auth.js); signed-out users go to /login and come back
+    if (!BW.auth || !BW.auth.signedIn()) return BW.toast("Sign in to keep your blends in your account.", { link: { href: BW.auth ? BW.auth.loginUrl("/build?step=3") : "/login", label: "Sign in" } });
+    if (issues().length) return BW.toast("Fix the highlighted dose issue before saving.");
+    const p = customProduct();
+    btn.disabled = true;
+    try {
+      await BW.auth.saveBlend(p.name, p.custom);
+      BW.toast(`${p.name} saved to your account.`, { link: { href: "/account", label: "View" } });
+    } catch (err) { BW.toast(err.message); }
+    btn.disabled = false;
+  }
+
   /* ---------- navigation ---------- */
   function go(n, push) {
     if (n > 1 && !draft.format) n = 1;
@@ -279,7 +291,7 @@
     $("[data-stepper]").innerHTML = ["Format", "Size", "Ratios"].map((t, i) => `<li><i>${i + 1}</i>${t}</li>`).join("");
     renderStep1();
     root.addEventListener("click", (e) => {
-      const t = e.target.closest("[data-format],[data-opt],[data-next],[data-back],[data-ing],[data-remove-ing],[data-even],[data-add-custom],[data-stepper] li");
+      const t = e.target.closest("[data-format],[data-opt],[data-next],[data-back],[data-ing],[data-remove-ing],[data-even],[data-add-custom],[data-save-blend],[data-stepper] li");
       if (!t) return;
       if (t.dataset.format) {
         draft.format = t.dataset.format;
@@ -298,6 +310,7 @@
         buildSlider(); sync(); save();
       } else if (t.dataset.removeIng) { draft.customised = true; removeIng(t.dataset.removeIng); buildSlider(); sync(); save(); }
       else if (t.hasAttribute("data-even")) { const ev = evenSplit(draft.ingredients.length); draft.ingredients.forEach((id, i) => { draft.pct[id] = ev[i]; }); sync(); save(); }
+      else if (t.hasAttribute("data-save-blend")) saveToAccount(t);
       else if (t.hasAttribute("data-add-custom")) {
         const p = customProduct();
         BW.cart.addCustom(p, 1);

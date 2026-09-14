@@ -1,6 +1,7 @@
 /* BlendWorks site shell — icon sprite, product artwork, header/footer, cart UI (badge, drawer, line items),
    catalog cards + add-to-cart, Ctrl+K search, toasts. Loaded on every page after data/*.js and cart.js and
-   before motion.js. All animation is delegated to BW.motion through BW.fx(); without it the UI is static. */
+   before motion.js and auth.js (which fills the [data-account-link] hooks rendered here).
+   All animation is delegated to BW.motion through BW.fx(); without it the UI is static. */
 (function () {
   window.BW = window.BW || {};
   const $ = (s, r) => (r || document).querySelector(s);
@@ -29,7 +30,9 @@
     mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 7L2 7"/>',
     chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/>',
-    pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>'
+    pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+    user: '<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="4"/>',
+    save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>'
   };
   BW.icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const I = BW.icons = {};
@@ -113,6 +116,7 @@
       <nav class="nav" aria-label="Primary">${navLinks()}</nav>
       <div class="header-actions">
         <button class="btn-icon" data-open-search aria-label="Search products" title="Search (Ctrl+K)">${I.search}</button>
+        <a class="btn-icon" data-account-link href="/login" aria-label="Sign in">${I.user}</a>
         <button class="btn-icon cart-btn" data-open-cart aria-label="Open cart">${I.cart}<span class="cart-count" data-cart-count>0</span></button>
         <a class="btn btn-primary btn-sm" href="/shop">Shop blends</a>
         <button class="btn-icon menu-btn" data-open-menu aria-label="Open menu" aria-expanded="false">${I.menu}</button>
@@ -120,7 +124,7 @@
     </div>`;
     const mm = menu.el = document.body.appendChild(el("div", "mobile-menu",
       `<div class="close-row">${LOGO}<button class="btn-icon" data-close-menu aria-label="Close menu">${I.close}</button></div>
-       <nav aria-label="Mobile">${navLinks()}<a href="/cart">Cart</a></nav>
+       <nav aria-label="Mobile">${navLinks()}<a href="/cart">Cart</a><a href="/login" data-account-link>Sign in</a></nav>
        <a class="btn btn-primary btn-lg" href="/shop">Shop blends</a>`));
     const toggleBtn = $("[data-open-menu]", host);
     const set = (open) => {

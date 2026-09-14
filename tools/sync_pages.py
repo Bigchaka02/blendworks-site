@@ -83,7 +83,7 @@ def scripts_block(name, page, cfg):
         out.append(cdn(GSAP + "SplitText.min.js"))
     if "flip" in plugins:
         out.append(cdn(GSAP + "Flip.min.js"))
-    out += [cdn(LENIS), local("site.js"), local("motion.js")]
+    out += [cdn(LENIS), local("site.js"), local("motion.js"), local("auth.js")]
     out += [local("%s.js" % s) for s in page.get("scripts", [])]
     return "\n".join(out)
 

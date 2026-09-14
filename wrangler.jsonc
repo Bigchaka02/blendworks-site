@@ -1,7 +1,19 @@
-// Cloudflare Workers static-assets config — "npx wrangler deploy" (run by Workers Builds on every push to main)
-// publishes this folder as-is. Custom domains (blendworks.fit, www) are attached in the dashboard.
+// Cloudflare Worker config — "npx wrangler deploy" (run by Workers Builds on every push to main) publishes this folder
+// as static assets and worker/index.js as the API behind /api/*. Custom domains (blendworks.fit, www) are attached in
+// the dashboard. The D1 database "blendworks" holds accounts (schema: worker/schema.sql).
 {
   "name": "blendworks-site",
+  "main": "worker/index.js",
   "compatibility_date": "2026-08-20",
-  "assets": { "directory": "./", "not_found_handling": "404-page", "html_handling": "auto-trailing-slash" }
+  "assets": {
+    "directory": "./",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "blendworks", "database_id": "2a9b5d69-1610-481b-bc04-e37a2f7fdbb5" }
+  ],
+  "observability": { "enabled": true }
 }
