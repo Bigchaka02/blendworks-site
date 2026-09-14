@@ -32,3 +32,36 @@ CREATE TABLE IF NOT EXISTS blends (    -- custom blends saved from /build
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS blends_user ON blends(user_id, created_at);
+
+-- 2026-09-14: purchase & delivery (applied)
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'customer';   -- 'customer' | 'admin' (admin = fulfilment console + test payments)
+CREATE TABLE IF NOT EXISTS orders (
+  id TEXT PRIMARY KEY,                 -- uuid
+  number INTEGER NOT NULL UNIQUE,      -- shown as BW-<number>, starts at 1001
+  access_key TEXT NOT NULL,            -- secret in the order link (guest access, e-mails)
+  user_id TEXT,                        -- null for guests / deleted accounts
+  email TEXT NOT NULL,
+  status TEXT NOT NULL,                -- pending_payment | paid | processing | shipped | delivered | cancelled | refunded
+  provider TEXT NOT NULL,              -- stripe | paypal | test
+  provider_ref TEXT,                   -- Stripe Checkout Session id / PayPal order id
+  payment_ref TEXT,                    -- Stripe PaymentIntent / PayPal capture id
+  currency TEXT NOT NULL DEFAULT 'usd',
+  subtotal INTEGER NOT NULL,           -- cents
+  shipping INTEGER NOT NULL,
+  tax INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL,
+  shipping_method TEXT NOT NULL,       -- standard | express
+  address TEXT NOT NULL,               -- JSON {name, line1, line2, city, state, zip, phone, country}
+  items TEXT NOT NULL,                 -- JSON [{id, name, type, qty, unit(cents), servingSize, description, custom|null}]
+  tracking TEXT,                       -- JSON {carrier, number, url}
+  note TEXT,                           -- admin note
+  created_at INTEGER NOT NULL, paid_at INTEGER, shipped_at INTEGER, delivered_at INTEGER, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created_at);
+CREATE INDEX IF NOT EXISTS orders_status ON orders(status, created_at);
+CREATE INDEX IF NOT EXISTS orders_provider ON orders(provider_ref);
+CREATE TABLE IF NOT EXISTS order_events (   -- timeline: created, paid, processing, shipped, delivered, cancelled, refunded, tracking, note
+  id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, at INTEGER NOT NULL, actor TEXT NOT NULL, type TEXT NOT NULL, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id, at);
+CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, provider TEXT NOT NULL, at INTEGER NOT NULL);   -- idempotency

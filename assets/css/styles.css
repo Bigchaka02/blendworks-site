@@ -530,6 +530,59 @@ textarea.input { min-height: 140px; resize: vertical; }
 .btn-icon { position: relative; }
 .btn-icon.is-user::after { content: ""; position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
 
+/* ---------- 8c. Commerce: checkout choices, order page, status badges, admin console ---------- */
+.mt-05 { margin-top: .5rem; }
+.mt-1 { margin-top: 1rem; }
+.card.p-0 { padding: 0; }
+.badge.success { background: rgb(52 211 153 / .14); color: var(--success); border-color: rgb(52 211 153 / .3); }
+.badge.danger { background: rgb(var(--danger-rgb) / .14); color: #FCA5A5; border-color: rgb(var(--danger-rgb) / .3); }
+.co-section { padding: 1.5rem; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--border); }
+.co-section h2 { font-size: 1.15rem; margin-bottom: 1rem; }
+.co-section .field { margin-bottom: 0; }
+.choice { display: flex; gap: .9rem; align-items: flex-start; padding: .9rem 1rem; border-radius: var(--r-md); border: 1px solid var(--border); background: rgba(255,255,255,.02); cursor: pointer; transition: border-color .2s, background .2s; }
+.choice:hover { border-color: var(--border-strong); }
+.choice.is-active { border-color: var(--sky); background: rgb(var(--sky-rgb) / .08); }
+.choice.is-disabled { opacity: .55; cursor: not-allowed; }
+.choice input { margin-top: .3rem; accent-color: var(--sky); flex-shrink: 0; }
+.choice > span { display: flex; flex-direction: column; gap: .15rem; }
+.choice b { color: var(--text); }
+.choice > span > span { color: var(--muted); font-size: .9rem; }
+.choice .price { margin-left: auto; font-weight: 600; white-space: nowrap; color: var(--text); }
+.summary .items .line span:first-child { color: var(--text); }
+.order-steps { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; }
+.order-step { text-align: center; font-size: .8rem; color: var(--muted-2); position: relative; padding-top: 1.7rem; }
+.order-step b { display: block; font-weight: 600; }
+.order-step span { font-size: .72rem; }
+.order-step::before { content: ""; position: absolute; top: .4rem; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--bg-3); border: 2px solid var(--border-strong); z-index: 1; }
+.order-step::after { content: ""; position: absolute; top: calc(.4rem + 6px); left: calc(50% + 7px); right: calc(-50% + 7px); height: 2px; background: var(--border); }
+.order-step:last-child::after { display: none; }
+.order-step.is-done { color: var(--text); }
+.order-step.is-done::before { background: var(--grad); border-color: transparent; }
+.order-step.is-done:not(.is-current)::after { background: var(--sky); }
+.order-step.is-current::before { box-shadow: 0 0 0 4px rgb(var(--sky-rgb) / .25); }
+.order-items .line { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid var(--border); font-size: .95rem; }
+.order-items .line:last-child { border-bottom: 0; }
+.addr { white-space: pre-line; color: var(--muted); margin: 0 0 .5rem; }
+.tracking-box { padding: 1rem 1.25rem; border-radius: var(--r-md); background: rgb(var(--mint-rgb) / .1); border: 1px solid rgb(var(--mint-rgb) / .3); }
+.tracking-box a { color: var(--sky-light); font-weight: 600; }
+.events { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; font-size: .88rem; color: var(--muted); }
+.events b { color: var(--text); text-transform: capitalize; }
+.events span { font-size: .78rem; color: var(--muted-2); }
+.order-row { text-decoration: none; }
+.order-row:hover { border-color: var(--border-strong); }
+.admin-layout { display: grid; grid-template-columns: 1.35fr .9fr; gap: 1.5rem; align-items: start; }
+.admin-detail { position: sticky; top: calc(var(--header-h) + 1rem); max-height: calc(100vh - var(--header-h) - 2rem); overflow: auto; }
+.admin-detail .small-h { font-size: .8rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-2); margin: 1rem 0 .4rem; }
+.table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.admin-table th, .admin-table td { text-align: left; padding: .7rem .9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.admin-table th { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-2); white-space: nowrap; }
+.admin-table tr[data-id] { cursor: pointer; }
+.admin-table tr[data-id]:hover td { background: var(--surface); }
+.admin-table tr.is-selected td { background: rgb(var(--sky-rgb) / .08); }
+.admin-table .num { white-space: nowrap; }
+[data-admin-q] { width: 260px; padding: .6rem 1rem; border-radius: var(--r-pill); }
+
 /* ---------- 9. Keyframes & responsive ---------- */
 @keyframes shimmer { to { background-position: -300% 0; } }
 @keyframes drift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(6%, -4%) scale(1.08); } 100% { transform: translate(-4%, 6%) scale(.96); } }
@@ -541,7 +594,8 @@ textarea.input { min-height: 140px; resize: vertical; }
   .header-actions .btn-primary { display: none; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .footer-grid { grid-template-columns: 1fr 1fr; }
-  .product-layout, .split, .cart-layout, .contact-grid { grid-template-columns: 1fr; gap: 2rem; }
+  .product-layout, .split, .cart-layout, .contact-grid, .admin-layout { grid-template-columns: 1fr; gap: 2rem; }
+  .admin-detail { position: static; max-height: none; }
   .product-stage { position: static; min-height: 380px; }
   .summary { position: static; }
   .values { grid-template-columns: 1fr; }
@@ -554,6 +608,8 @@ textarea.input { min-height: 140px; resize: vertical; }
   .float-card { position: static; width: 100%; }
 
   .fmt-grid, .blend-preview, .account-grid, .blend-row { grid-template-columns: 1fr; }
+  .order-step { font-size: .7rem; }
+  [data-admin-q] { width: 100%; }
   .opt-grid, .opt-grid.four { grid-template-columns: 1fr 1fr; }
   .ratio-track { height: 70px; } .ratio-handles, .ratio-handle { height: 94px; }
   .ratio-seg b { font-size: .8rem; } .ratio-seg span { font-size: .7rem; }

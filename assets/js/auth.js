@@ -147,8 +147,17 @@
       await BW.auth.deleteAccount(fd.get("password"));
       location.href = "/";
     }, "Deleting…");
-    // saved blends
+    // orders + saved blends
+    await renderOrders();
     await renderBlends();
+  }
+  async function renderOrders() {
+    const host = $("[data-orders]");
+    let orders = [];
+    try { orders = await BW.auth.api("/api/orders").then((d) => d.orders); } catch (e) { host.innerHTML = `<p class="muted">Couldn't load your orders: ${BW.escapeHtml(e.message)}</p>`; return; }
+    if (!orders.length) { host.innerHTML = `<div class="empty-state plain">${BW.icons.bag}<p><b>No orders yet.</b></p><p>Your orders will appear here with their status and tracking.</p><a class="btn btn-primary" href="/shop">Shop blends</a></div>`; return; }
+    const when = (t) => new Date(t * 1000).toLocaleDateString(undefined, { dateStyle: "medium" });
+    host.innerHTML = orders.map((o) => `<a class="blend-row order-row" href="/order?id=${o.id}">${BW.orderBadge(o.status)}<div><b>${o.number}</b> <span class="muted small">· ${when(o.createdAt)}</span><div class="muted small">${o.items.map(BW.escapeHtml).join(" · ")}</div></div><b class="num">${BW.formatPrice(o.total / 100)}</b></a>`).join("");
   }
   async function renderBlends() {
     const host = $("[data-blends]");

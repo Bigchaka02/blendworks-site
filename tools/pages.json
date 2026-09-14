@@ -1,6 +1,6 @@
 {
   "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'canonical': false = no canonical/og:url (404).",
-  "version": "20260914a",
+  "version": "20260914b",
   "site": "https://blendworks.fit",
   "pages": {
     "index": {
@@ -57,7 +57,7 @@
     "checkout": {
       "path": "/checkout",
       "title": "Checkout — BlendWorks",
-      "description": "BlendWorks checkout.",
+      "description": "BlendWorks checkout: shipping and payment.",
       "scripts": [
         "checkout"
       ],
@@ -119,6 +119,28 @@
       "description": "Your BlendWorks profile, password and saved blends.",
       "data": [
         "ingredients"
+      ],
+      "noindex": true,
+      "scripts": [
+        "order"
+      ]
+    },
+    "order": {
+      "path": "/order",
+      "title": "Your order — BlendWorks",
+      "description": "Order confirmation and delivery status.",
+      "scripts": [
+        "order"
+      ],
+      "noindex": true
+    },
+    "admin": {
+      "path": "/admin",
+      "title": "Orders — BlendWorks admin",
+      "description": "BlendWorks fulfilment console.",
+      "scripts": [
+        "order",
+        "admin"
       ],
       "noindex": true
     }
