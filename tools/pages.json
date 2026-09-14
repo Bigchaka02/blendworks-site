@@ -1,6 +1,6 @@
 {
   "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'canonical': false = no canonical/og:url (404).",
-  "version": "20260914c",
+  "version": "20260914d",
   "site": "https://blendworks.fit",
   "pages": {
     "index": {

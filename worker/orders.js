@@ -2,12 +2,17 @@
    flows, payment confirmation (return trip + Stripe webhook), order access for customers, fulfilment for admins,
    e-mail notifications (Resend, once configured). Tables: orders, order_events, webhook_events (worker/schema.sql).
 
-   Provider secrets live in the Worker's dashboard settings, never in the repo:
-     STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET          (Stripe Checkout, hosted page; webhook -> /api/webhooks/stripe)
-     PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV  ("sandbox" until live; Orders API v2, approve-redirect + capture)
-     RESEND_API_KEY, EMAIL_FROM                        (order e-mails; skipped when absent)
-   Without a provider's secrets its option is hidden at checkout. Admin accounts always see a "test payment" option that
-   completes an order without charging anything, so fulfilment can be exercised before the keys exist. */
+   Payment methods and what switches them on (secrets = Worker dashboard settings, vars = wrangler.jsonc):
+     stripe   Card / Apple Pay / Google Pay  secrets STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (webhook -> /api/webhooks/stripe)
+     paypal   PayPal (Orders v2, approve + capture)   secrets PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV (sandbox|live)
+     venmo    via the PayPal keys (payment_source.venmo, US buyers) — or MANUAL with var VENMO_HANDLE
+     cashapp  MANUAL with var CASHAPP_CASHTAG (the customer pays in the app with the order number as the memo)
+     bitcoin  Coinbase Commerce hosted charge (secrets COINBASE_COMMERCE_API_KEY, COINBASE_COMMERCE_WEBHOOK_SECRET,
+              webhook -> /api/webhooks/coinbase) — or MANUAL to var BTC_ADDRESS, quoted at the live spot rate
+     test     admin accounts only: completes an order without charging, to rehearse fulfilment
+     RESEND_API_KEY, EMAIL_FROM  order e-mails (skipped when absent)
+   "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
+   "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden. */
 import { HttpError, json, error, noContent, guard, readJson, str, normEmail, validEmail, now, ip, randomToken, hmacHex, timingEqual, enc, money } from "./lib.js";
 import { currentSession, requireUser, requireAdmin, checkSpecShape, assertRate, recordAttempt } from "./auth.js";
 
@@ -106,11 +111,20 @@ function checkAddress(a) {
 }
 
 /* ---------- providers ---------- */
-const providers = (env, user) => ({
-  stripe: !!env.STRIPE_SECRET_KEY,
-  paypal: !!(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET),
-  test: !!(user && user.role === "admin")
-});
+const validBtcAddress = (a) => /^(bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(a || "");
+function providerModes(env, user) {   // provider -> "api" | "manual" | null (hidden)
+  const paypal = !!(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET);
+  return {
+    stripe: env.STRIPE_SECRET_KEY ? "api" : null,
+    paypal: paypal ? "api" : null,
+    venmo: paypal ? "api" : env.VENMO_HANDLE ? "manual" : null,
+    cashapp: env.CASHAPP_CASHTAG ? "manual" : null,
+    bitcoin: env.COINBASE_COMMERCE_API_KEY ? "api" : validBtcAddress(env.BTC_ADDRESS) ? "manual" : null,
+    test: user && user.role === "admin" ? "api" : null
+  };
+}
+const providers = (env, user) => Object.fromEntries(Object.entries(providerModes(env, user)).map(([k, v]) => [k, !!v]));
+const PROVIDER_OFF = { stripe: "Card payments are not switched on yet.", paypal: "PayPal is not switched on yet.", venmo: "Venmo is not switched on yet.", cashapp: "Cash App is not switched on yet.", bitcoin: "Bitcoin payments are not switched on yet.", test: "Test payments are for admins only." };
 async function providerJson(res, label) {
   const text = await res.text();
   let data = null;
@@ -170,20 +184,54 @@ async function paypalCall(env, method, path, body, requestId) {
   const res = await fetch(`${paypalBase(env)}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   return providerJson(res, `paypal ${method} ${path}`);
 }
-async function paypalCreate(env, order, lines, base) {
+async function paypalCreate(env, order, lines, base, source = "paypal") {   // source: "paypal" (approve link) or "venmo" (payer-action link)
   const usd = (cents) => ({ currency_code: "USD", value: money(cents) });
+  const urls = { return_url: `${base}/order?id=${order.id}&key=${order.access_key}&paypal=return`, cancel_url: `${base}/checkout?cancelled=1` };
   const body = {
     intent: "CAPTURE",
     purchase_units: [{ reference_id: order.id, custom_id: order.id, invoice_id: orderNumber(order), description: `BlendWorks order ${orderNumber(order)}`,
       amount: Object.assign(usd(order.total), { breakdown: { item_total: usd(order.subtotal), shipping: usd(order.shipping), tax_total: usd(order.tax) } }),
-      items: lines.map((l) => ({ name: l.name.slice(0, 127), description: (l.description || "").slice(0, 127), quantity: String(l.qty), unit_amount: usd(l.unit), category: "PHYSICAL_GOODS" })) }],
-    application_context: { brand_name: "BlendWorks", user_action: "PAY_NOW", shipping_preference: "NO_SHIPPING",
-      return_url: `${base}/order?id=${order.id}&key=${order.access_key}&paypal=return`, cancel_url: `${base}/checkout?cancelled=1` }
+      items: lines.map((l) => ({ name: l.name.slice(0, 127), description: (l.description || "").slice(0, 127), quantity: String(l.qty), unit_amount: usd(l.unit), category: "PHYSICAL_GOODS" })) }]
   };
+  if (source === "venmo") body.payment_source = { venmo: { experience_context: Object.assign({ brand_name: "BlendWorks", shipping_preference: "NO_SHIPPING" }, urls) } };
+  else body.application_context = Object.assign({ brand_name: "BlendWorks", user_action: "PAY_NOW", shipping_preference: "NO_SHIPPING" }, urls);
   const o = await paypalCall(env, "POST", "/v2/checkout/orders", body, `order-${order.id}`);
-  const approve = (o.links || []).find((l) => l.rel === "approve");
-  if (!approve) throw new HttpError(502, "PayPal did not return an approval link.");
-  return { ref: o.id, url: approve.href };
+  const next = (o.links || []).find((l) => l.rel === (source === "venmo" ? "payer-action" : "approve")) || (o.links || []).find((l) => l.rel === "approve" || l.rel === "payer-action");
+  if (!next) throw new HttpError(502, "PayPal did not return an approval link.");
+  return { ref: o.id, url: next.href };
+}
+// Coinbase Commerce: hosted charge (Bitcoin and other crypto), confirmed by polling the charge and by the signed webhook.
+const CC = "https://api.commerce.coinbase.com";
+const ccHeaders = (env) => ({ "X-CC-Api-Key": env.COINBASE_COMMERCE_API_KEY, "X-CC-Version": "2018-03-22", "Content-Type": "application/json" });
+async function coinbaseCreate(env, order, base) {
+  const res = await fetch(`${CC}/charges`, { method: "POST", headers: ccHeaders(env), body: JSON.stringify({
+    name: `BlendWorks order ${orderNumber(order)}`, description: `${parse(order.items, []).length} item(s), shipping to ${parse(order.address, {}).state || "US"}`,
+    pricing_type: "fixed_price", local_price: { amount: money(order.total), currency: "USD" }, metadata: { order_id: order.id },
+    redirect_url: `${base}/order?id=${order.id}&key=${order.access_key}&crypto=return`, cancel_url: `${base}/checkout?cancelled=1` }) });
+  const d = (await providerJson(res, "coinbase create")).data;
+  if (!d || !d.hosted_url) throw new HttpError(502, "Coinbase Commerce did not return a payment page.");
+  return { ref: d.code || d.id, url: d.hosted_url };
+}
+async function coinbaseCharge(env, code) {
+  const res = await fetch(`${CC}/charges/${encodeURIComponent(code)}`, { headers: ccHeaders(env) });
+  return (await providerJson(res, "coinbase get")).data;
+}
+const ccStatus = (charge) => { const t = (charge && charge.timeline) || []; return t.length ? t[t.length - 1].status : "NEW"; };
+const ccPaymentRef = (charge) => { try { return charge.payments[0].transaction_id || charge.code; } catch (e) { return charge && charge.code; } };
+// Manual methods: instructions the customer follows in their own app; an admin confirms receipt.
+async function btcSpotRate() {
+  try { const r = await fetch("https://api.coinbase.com/v2/prices/BTC-USD/spot", { headers: { Accept: "application/json" } }); const d = await r.json(); return Number(d.data.amount) || null; } catch (e) { return null; }
+}
+async function manualInstructions(env, order, provider) {
+  const memo = orderNumber(order), amount = money(order.total);
+  if (provider === "cashapp") { const tag = "$" + env.CASHAPP_CASHTAG.replace(/[^A-Za-z0-9_-]/g, ""); return { mode: "manual", provider, handle: tag, memo, amount: order.total, link: `https://cash.app/${tag}/${amount}` }; }
+  if (provider === "venmo") { const u = env.VENMO_HANDLE.replace(/^@/, ""); return { mode: "manual", provider, handle: `@${u}`, memo, amount: order.total, link: `https://venmo.com/?txn=pay&audience=private&recipients=${encodeURIComponent(u)}&amount=${amount}&note=${encodeURIComponent(memo)}` }; }
+  if (provider === "bitcoin") {
+    const rate = await btcSpotRate(), btc = rate ? (order.total / 100 / rate).toFixed(8) : null;
+    return { mode: "manual", provider, address: env.BTC_ADDRESS, memo, amount: order.total, btc, rate, quotedAt: now(),
+      uri: `bitcoin:${env.BTC_ADDRESS}${btc ? `?amount=${btc}&label=${encodeURIComponent("BlendWorks " + memo)}` : ""}` };
+  }
+  throw new HttpError(400, "Unknown payment method.");
 }
 const paypalCaptureId = (o) => { try { return o.purchase_units[0].payments.captures[0].id; } catch (e) { return null; } };
 
@@ -222,21 +270,34 @@ async function refreshPayment(env, ctx, order, base) {   // pending order: ask t
       const s = await stripeSession(env, order.provider_ref);
       if (s.payment_status === "paid") return markPaid(env, ctx, order, s.payment_intent, "stripe", base);
       if (s.status === "expired") await cancelPending(env, order, "Payment session expired");
-    } else if (order.provider === "paypal" && env.PAYPAL_CLIENT_ID) {
+    } else if ((order.provider === "paypal" || order.provider === "venmo") && env.PAYPAL_CLIENT_ID && order.provider_ref !== "manual") {
       let o = await paypalCall(env, "GET", `/v2/checkout/orders/${order.provider_ref}`);
       if (o.status === "APPROVED") o = await paypalCall(env, "POST", `/v2/checkout/orders/${order.provider_ref}/capture`, {}, `capture-${order.id}`);
-      if (o.status === "COMPLETED") return markPaid(env, ctx, order, paypalCaptureId(o), "paypal", base);
+      if (o.status === "COMPLETED") return markPaid(env, ctx, order, paypalCaptureId(o), order.provider, base);
+    } else if (order.provider === "bitcoin" && env.COINBASE_COMMERCE_API_KEY && order.provider_ref !== "manual") {
+      const c = await coinbaseCharge(env, order.provider_ref), st = ccStatus(c);
+      if (st === "COMPLETED" || st === "RESOLVED") return markPaid(env, ctx, order, ccPaymentRef(c), "coinbase", base);
+      if (st === "EXPIRED" || st === "CANCELED") await cancelPending(env, order, `Crypto charge ${st.toLowerCase()}`);
+      else await setPaymentInfo(env, order, { mode: "api", provider: "bitcoin", status: st });
     }
   } catch (e) { console.error("refreshPayment", order.id, e && e.message); }
   return order;
 }
+async function setPaymentInfo(env, order, info) {
+  const current = parse(order.payment_info, null);
+  if (JSON.stringify(current) === JSON.stringify(info)) return;
+  await env.DB.prepare("UPDATE orders SET payment_info = ? WHERE id = ?").bind(JSON.stringify(info), order.id).run();
+  order.payment_info = JSON.stringify(info);
+}
 function orderView(o, events, admin) {
   const m = SHIPPING_METHODS[o.shipping_method] || {};
+  const reported = (events || []).filter((e) => e.type === "reported").pop();
   return {
     id: o.id, number: orderNumber(o), status: o.status, provider: o.provider, email: o.email,
     items: parse(o.items, []), amounts: { subtotal: o.subtotal, shipping: o.shipping, tax: o.tax, total: o.total, currency: o.currency },
     shippingMethod: { id: o.shipping_method, label: m.label || o.shipping_method, eta: m.eta || "" },
     address: parse(o.address, {}), tracking: parse(o.tracking, null), note: admin ? o.note : undefined,
+    paymentInfo: parse(o.payment_info, null), reportedAt: reported ? reported.at : null,
     createdAt: o.created_at, paidAt: o.paid_at, shippedAt: o.shipped_at, deliveredAt: o.delivered_at, updatedAt: o.updated_at,
     paymentRef: admin ? o.payment_ref : undefined, providerRef: admin ? o.provider_ref : undefined, userId: admin ? o.user_id : undefined,
     events: (events || []).filter((e) => admin || e.type !== "note").map((e) => ({ at: e.at, type: e.type, actor: admin ? e.actor : undefined, detail: admin || e.type !== "note" ? e.detail : undefined }))
@@ -247,7 +308,7 @@ const eventsFor = async (env, id) => (await env.DB.prepare("SELECT * FROM order_
 /* ---------- customer handlers ---------- */
 export const checkoutConfig = guard(async (request, env) => {
   const s = await currentSession(env, request), user = s && s.user;
-  return json({ ok: true, providers: providers(env, user), states: US_STATES, taxNote: "Sales tax is not applied yet.",
+  return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, taxNote: "Sales tax is not applied yet.",
     methods: Object.entries(SHIPPING_METHODS).map(([id, m]) => ({ id, label: m.label, eta: m.eta, rate: m.rate, freeOver: m.freeOver || 0 })),
     user: user ? { email: user.email, name: user.name } : null });
 });
@@ -263,11 +324,8 @@ export const checkout = guard(async (request, env, ctx, url) => {
   const subtotal = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
   const ship = shippingFor(str(body.shippingMethod, 20), subtotal);
   const total = subtotal + ship.cents + TAX_CENTS;
-  const provider = str(body.provider, 10), available = providers(env, user);
-  if (!available[provider]) {
-    const why = { stripe: "Card payments are not switched on yet.", paypal: "PayPal is not switched on yet.", test: "Test payments are for admins only." }[provider] || "Choose a payment method.";
-    throw new HttpError(provider === "test" ? 403 : provider in available ? 503 : 400, why);
-  }
+  const provider = str(body.provider, 10), modes = providerModes(env, user), mode = modes[provider];
+  if (!mode) throw new HttpError(provider === "test" ? 403 : provider in modes ? 503 : 400, PROVIDER_OFF[provider] || "Choose a payment method.");
   const id = crypto.randomUUID(), key = randomToken(), t = now();
   await env.DB.prepare(`INSERT INTO orders (id, number, access_key, user_id, email, status, provider, currency, subtotal, shipping, tax, total, shipping_method, address, items, created_at, updated_at)
     VALUES (?, (SELECT COALESCE(MAX(number), 1000) + 1 FROM orders), ?, ?, ?, 'pending_payment', ?, 'usd', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -275,10 +333,16 @@ export const checkout = guard(async (request, env, ctx, url) => {
   const order = await loadOrder(env, id);
   await addEvent(env, id, user ? "customer" : "guest", "created", `${lines.length} line(s), ${provider}`);
   try {
-    let url_ = `${base}/order?id=${id}&key=${key}`;
-    if (provider === "stripe") { const r = await stripeCreateSession(env, order, lines, base); await env.DB.prepare("UPDATE orders SET provider_ref = ? WHERE id = ?").bind(r.ref, id).run(); url_ = r.url; }
-    else if (provider === "paypal") { const r = await paypalCreate(env, order, lines, base); await env.DB.prepare("UPDATE orders SET provider_ref = ? WHERE id = ?").bind(r.ref, id).run(); url_ = r.url; }
-    else await markPaid(env, ctx, order, `test-${t}`, "test", base);
+    let url_ = `${base}/order?id=${id}&key=${key}`, r = null;
+    if (provider === "stripe") r = await stripeCreateSession(env, order, lines, base);
+    else if (provider === "paypal" || (provider === "venmo" && mode === "api")) r = await paypalCreate(env, order, lines, base, provider);
+    else if (provider === "bitcoin" && mode === "api") r = await coinbaseCreate(env, order, base);
+    else if (mode === "manual") {
+      const info = await manualInstructions(env, order, provider);
+      await env.DB.prepare("UPDATE orders SET provider_ref = 'manual', payment_info = ? WHERE id = ?").bind(JSON.stringify(info), id).run();
+      await addEvent(env, id, "system", "instructions", `${provider} instructions shown`);
+    } else await markPaid(env, ctx, order, `test-${t}`, "test", base);
+    if (r) { await env.DB.prepare("UPDATE orders SET provider_ref = ? WHERE id = ?").bind(r.ref, id).run(); url_ = r.url; }
     return json({ ok: true, orderId: id, number: orderNumber(order), url: url_ }, 201);
   } catch (e) {
     await cancelPending(env, order, "Payment could not be started: " + (e && e.message ? e.message.slice(0, 200) : "provider error"));
@@ -286,14 +350,27 @@ export const checkout = guard(async (request, env, ctx, url) => {
   }
 });
 
-export const getOrder = guard(async (request, env, ctx, id, url) => {
+async function authorizedOrder(env, request, id, url) {   // owner, admin, or the access key from the order link
   const order = await loadOrder(env, id);
   const s = await currentSession(env, request), key = url.searchParams.get("key") || "";
   const owner = !!(s && order && order.user_id && s.user.id === order.user_id), admin = !!(s && s.user.role === "admin");
   const keyOk = !!(order && key && timingEqual(enc.encode(key), enc.encode(order.access_key)));
   if (!order || !(owner || admin || keyOk)) throw new HttpError(404, "We couldn't find that order.");
+  return { order, admin };
+}
+export const getOrder = guard(async (request, env, ctx, id, url) => {
+  const { order, admin } = await authorizedOrder(env, request, id, url);
   await refreshPayment(env, ctx, order, siteUrl(env, url));
   return json({ ok: true, order: orderView(order, await eventsFor(env, id), admin) });
+});
+
+export const reportPaid = guard(async (request, env, ctx, id, url) => {   // "I've sent the payment" on a manual-method order
+  const { order } = await authorizedOrder(env, request, id, url);
+  const info = parse(order.payment_info, null);
+  if (order.status !== "pending_payment" || !info || info.mode !== "manual") throw new HttpError(409, "This order isn't waiting for a manual payment.");
+  const events = await eventsFor(env, id), last = events.filter((e) => e.type === "reported").pop();
+  if (!last || now() - last.at > 600) await addEvent(env, id, "customer", "reported", `Customer says the ${order.provider} payment was sent`);
+  return json({ ok: true, order: orderView(order, await eventsFor(env, id), false) });
 });
 
 export const listOrders = guard(async (request, env) => {
@@ -320,15 +397,35 @@ export const stripeWebhook = guard(async (request, env, ctx, url) => {
   return json({ received: true });
 });
 
+/* ---------- Coinbase Commerce webhook (X-CC-Webhook-Signature = hex HMAC-SHA256 of the raw body) ---------- */
+export const coinbaseWebhook = guard(async (request, env, ctx, url) => {
+  if (!env.COINBASE_COMMERCE_WEBHOOK_SECRET) throw new HttpError(503, "Webhook secret not configured.");
+  const raw = await request.text(), sig = request.headers.get("X-CC-Webhook-Signature") || "";
+  const expected = await hmacHex(env.COINBASE_COMMERCE_WEBHOOK_SECRET, raw);
+  if (!sig || !timingEqual(enc.encode(sig), enc.encode(expected))) throw new HttpError(400, "Bad signature.");
+  const event = (JSON.parse(raw) || {}).event || {};
+  const seen = await env.DB.prepare("SELECT id FROM webhook_events WHERE id = ?").bind(String(event.id)).first();
+  if (seen) return json({ received: true, duplicate: true });
+  await env.DB.prepare("INSERT INTO webhook_events (id, provider, at) VALUES (?, 'coinbase', ?)").bind(String(event.id), now()).run();
+  const charge = event.data || {}, orderId = charge.metadata && charge.metadata.order_id;
+  const order = orderId ? await loadOrder(env, orderId) : null;
+  if (order) {
+    if (event.type === "charge:confirmed" || event.type === "charge:resolved") await markPaid(env, ctx, order, ccPaymentRef(charge), "coinbase-webhook", siteUrl(env, url));
+    else if (event.type === "charge:failed") await cancelPending(env, order, "Crypto charge failed or expired");
+    else if (event.type === "charge:pending") await setPaymentInfo(env, order, { mode: "api", provider: "bitcoin", status: "PENDING" });
+  }
+  return json({ received: true });
+});
+
 /* ---------- admin: fulfilment ---------- */
 export const adminOrders = guard(async (request, env, ctx, url) => {
   await requireAdmin(env, request);
   const status = str(url.searchParams.get("status"), 20), q = str(url.searchParams.get("q"), 80).toLowerCase();
-  const rows = await env.DB.prepare("SELECT * FROM orders WHERE (? = '' OR status = ?) AND (? = '' OR email LIKE ? OR CAST(number AS TEXT) = ?) ORDER BY created_at DESC LIMIT 200")
+  const rows = await env.DB.prepare("SELECT *, (SELECT MAX(at) FROM order_events e WHERE e.order_id = orders.id AND e.type = 'reported') AS reported_at FROM orders WHERE (? = '' OR status = ?) AND (? = '' OR email LIKE ? OR CAST(number AS TEXT) = ?) ORDER BY created_at DESC LIMIT 200")
     .bind(status, status, q, `%${q}%`, q.replace(/^bw-/, "")).all();
   const counts = (await env.DB.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all()).results;
   return json({ ok: true, counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
-    orders: rows.results.map((o) => ({ id: o.id, number: orderNumber(o), email: o.email, status: o.status, provider: o.provider, total: o.total, createdAt: o.created_at, city: parse(o.address, {}).city, state: parse(o.address, {}).state, items: parse(o.items, []).map((l) => `${l.qty} × ${l.name}`) })) });
+    orders: rows.results.map((o) => ({ id: o.id, number: orderNumber(o), email: o.email, status: o.status, provider: o.provider, manual: o.provider_ref === "manual", reportedAt: o.reported_at || null, total: o.total, createdAt: o.created_at, city: parse(o.address, {}).city, state: parse(o.address, {}).state, items: parse(o.items, []).map((l) => `${l.qty} × ${l.name}`) })) });
 });
 
 export const adminOrder = guard(async (request, env, ctx, id) => {

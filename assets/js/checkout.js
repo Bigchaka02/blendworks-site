@@ -6,11 +6,16 @@
   const { $, $$ } = BW;
   const KEY_ADDR = "bw_address_v1", KEY_PENDING = "bw_pending_order";
   const dollars = (cents) => BW.formatPrice(cents / 100);
-  const PROVIDER_COPY = {
-    stripe: { title: "Card", text: "Visa, Mastercard, Amex, Apple Pay, Google Pay — secure checkout by Stripe", off: "Card payments open soon" },
-    paypal: { title: "PayPal", text: "Pay with your PayPal balance, bank or card", off: "PayPal opens soon" },
-    test: { title: "Test payment (admin)", text: "Completes the order without charging anything — for checking fulfilment", off: "" }
+  const PROVIDER_COPY = {   // text by mode: api = hosted provider page, manual = pay in your app, we confirm
+    stripe: { title: "Card", api: "Visa, Mastercard, Amex, Apple Pay, Google Pay — secure checkout by Stripe", off: "Card payments open soon" },
+    paypal: { title: "PayPal", api: "Pay with your PayPal balance, bank or card", off: "PayPal opens soon" },
+    venmo: { title: "Venmo", api: "Approve in the Venmo app — US only", manual: "Send the total to our Venmo with your order number as the note; we confirm within one business day", off: "Venmo opens soon" },
+    cashapp: { title: "Cash App", manual: "Send the total to our $Cashtag with your order number as the note; we confirm within one business day", off: "Cash App opens soon" },
+    bitcoin: { title: "Bitcoin", api: "Pay from any wallet on a Coinbase Commerce page — confirmed on-chain", manual: "We show you the BTC amount and address; confirmed when it arrives", off: "Bitcoin opens soon" },
+    test: { title: "Test payment (admin)", api: "Completes the order without charging anything — for checking fulfilment", off: "" }
   };
+  const PROVIDER_ORDER = ["stripe", "paypal", "venmo", "cashapp", "bitcoin"];
+  const SUBMIT = { stripe: "Continue to Stripe", paypal: "Continue to PayPal", "venmo:api": "Continue to Venmo", "venmo:manual": "Place order, then pay by Venmo", "cashapp:manual": "Place order, then pay by Cash App", "bitcoin:api": "Continue to Coinbase", "bitcoin:manual": "Place order, then pay in Bitcoin", test: "Place test order" };
 
   document.addEventListener("bw:ready", async () => {
     const form = $("[data-checkout]");
@@ -42,11 +47,12 @@
     const methodCost = (m) => (m.freeOver && subtotal >= m.freeOver ? 0 : m.rate);
     $("[data-co-methods]").innerHTML = cfg.methods.map((m) =>
       `<label class="choice${m.id === state.method ? " is-active" : ""}"><input type="radio" name="method" value="${m.id}"${m.id === state.method ? " checked" : ""}><span><b>${m.label}</b><span>${m.eta}${m.freeOver ? ` · free over ${dollars(m.freeOver)}` : ""}</span></span><span class="price num">${methodCost(m) ? dollars(methodCost(m)) : "Free"}</span></label>`).join("");
+    const modes = cfg.modes || {};
     const providerRow = (id) => {
-      const c = PROVIDER_COPY[id], on = cfg.providers[id];
-      return `<label class="choice${on ? "" : " is-disabled"}${id === state.provider ? " is-active" : ""}"><input type="radio" name="provider" value="${id}"${on ? "" : " disabled"}${id === state.provider ? " checked" : ""}><span><b>${c.title}</b><span>${on ? c.text : c.off}</span></span></label>`;
+      const c = PROVIDER_COPY[id], mode = modes[id], on = !!mode;
+      return `<label class="choice${on ? "" : " is-disabled"}${id === state.provider ? " is-active" : ""}"><input type="radio" name="provider" value="${id}"${on ? "" : " disabled"}${id === state.provider ? " checked" : ""}><span><b>${c.title}</b><span>${on ? c[mode] || c.api : c.off}</span></span></label>`;
     };
-    $("[data-co-providers]").innerHTML = ["stripe", "paypal"].concat(cfg.providers.test ? ["test"] : []).map(providerRow).join("");
+    $("[data-co-providers]").innerHTML = PROVIDER_ORDER.concat(cfg.providers.test ? ["test"] : []).map(providerRow).join("");
     if (!state.provider) {
       $("[data-co-providers]").insertAdjacentHTML("beforeend", '<div class="notice">Online payment opens soon. Your cart and address stay saved in this browser, so you can come back and finish in one click.</div>');
       $("[data-co-submit]").disabled = true;
@@ -63,7 +69,7 @@
       $("[data-co-subtotal]").textContent = dollars(subtotal);
       $("[data-co-shipping]").textContent = ship ? dollars(ship) : "Free";
       $("[data-co-total]").textContent = dollars(subtotal + ship);
-      $("[data-co-submit]").textContent = { stripe: "Continue to Stripe", paypal: "Continue to PayPal", test: "Place test order" }[state.provider] || "Continue to payment";
+      $("[data-co-submit]").textContent = SUBMIT[`${state.provider}:${modes[state.provider]}`] || SUBMIT[state.provider] || "Continue to payment";
     }
     renderSummary();
 

@@ -19,11 +19,13 @@ export async function run() {
     if (sql.startsWith("DELETE FROM auth_attempts")) return stmt(null);
     if (sql.startsWith("INSERT INTO orders")) {
       const number = db.orders.reduce((m, o) => Math.max(m, o.number), 1000) + 1;
-      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null });
+      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
       return stmt(null);
     }
     if (sql.startsWith("SELECT * FROM orders WHERE id = ?")) return stmt(db.orders.find((o) => o.id === p[0]));
+    if (sql.startsWith("UPDATE orders SET provider_ref = 'manual', payment_info")) { Object.assign(db.orders.find((o) => o.id === p[1]), { provider_ref: "manual", payment_info: p[0] }); return stmt(null); }
     if (sql.startsWith("UPDATE orders SET provider_ref")) { db.orders.find((o) => o.id === p[1]).provider_ref = p[0]; return stmt(null); }
+    if (sql.startsWith("UPDATE orders SET payment_info")) { db.orders.find((o) => o.id === p[1]).payment_info = p[0]; return stmt(null); }
     if (sql.startsWith("UPDATE orders SET status = 'paid'")) { const o = db.orders.find((o) => o.id === p[3]); if (o.status === "pending_payment") Object.assign(o, { status: "paid", payment_ref: p[0], paid_at: p[1], updated_at: p[2] }); return stmt(null); }
     if (sql.startsWith("UPDATE orders SET status = 'cancelled'")) { const o = db.orders.find((o) => o.id === p[1]); if (o.status === "pending_payment") Object.assign(o, { status: "cancelled", updated_at: p[0] }); return stmt(null); }
     if (sql.startsWith("INSERT INTO order_events")) {
@@ -39,20 +41,24 @@ export async function run() {
   const env = {
     DB: { prepare: (sql) => ({ bind: (...p) => exec(sql, p) }), batch: async (s) => { for (const x of s) await x.run(); return []; } },
     ASSETS: { fetch: (u) => fetch(new URL(u).pathname) },   // the local preview serves the JSON data files
-    SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret"
+    SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret",
+    CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit", BTC_ADDRESS: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", COINBASE_COMMERCE_API_KEY: "cc_fake", COINBASE_COMMERCE_WEBHOOK_SECRET: "cc_whsec_fake"
   };
   const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
 
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, paypalStatus: "APPROVED" };
+  const fake = { stripePaid: false, paypalStatus: "APPROVED", ccStatus: "PENDING" };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
     if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) return new Response(JSON.stringify({ id: url.split("/").pop(), payment_status: fake.stripePaid ? "paid" : "unpaid", status: fake.stripePaid ? "complete" : "open", payment_intent: "pi_fake_1" }));
     if (url === "https://api.stripe.com/v1/checkout/sessions") { calls.push({ stripe: Object.fromEntries(new URLSearchParams(init.body)) }); return new Response(JSON.stringify({ id: "cs_test_fake", url: "https://checkout.stripe.com/c/pay/cs_test_fake" })); }
     if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "tok" }));
-    if (url.endsWith("/v2/checkout/orders")) { calls.push({ paypal: JSON.parse(init.body) }); return new Response(JSON.stringify({ id: "PP-ORDER-1", status: "CREATED", links: [{ rel: "approve", href: "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
+    if (url.endsWith("/v2/checkout/orders")) { const body = JSON.parse(init.body); calls.push({ paypal: body }); const venmo = !!(body.payment_source && body.payment_source.venmo); return new Response(JSON.stringify({ id: venmo ? "PP-VENMO-1" : "PP-ORDER-1", status: venmo ? "PAYER_ACTION_REQUIRED" : "CREATED", links: [{ rel: venmo ? "payer-action" : "approve", href: venmo ? "https://www.sandbox.paypal.com/venmo?token=PP-VENMO-1" : "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
+    if (url === "https://api.commerce.coinbase.com/charges") { calls.push({ coinbase: JSON.parse(init.body) }); return new Response(JSON.stringify({ data: { id: "cc-id-1", code: "CCCODE1", hosted_url: "https://commerce.coinbase.com/charges/CCCODE1" } })); }
+    if (url.startsWith("https://api.commerce.coinbase.com/charges/")) return new Response(JSON.stringify({ data: { code: "CCCODE1", timeline: [{ status: "NEW" }, { status: fake.ccStatus }], payments: fake.ccStatus === "COMPLETED" ? [{ transaction_id: "btc-tx-1" }] : [] } }));
+    if (url.startsWith("https://api.coinbase.com/v2/prices/")) return new Response(JSON.stringify({ data: { amount: "80000.00", currency: "USD" } }));
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1")) return new Response(JSON.stringify({ id: "PP-ORDER-1", status: fake.paypalStatus }));
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1/capture")) { calls.push({ capture: true }); return new Response(JSON.stringify({ id: "PP-ORDER-1", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP-1" }] } }] })); }
     if (url.startsWith("https://api.resend.com/")) { calls.push({ email: JSON.parse(init.body).subject }); return new Response("{}"); }
@@ -110,6 +116,52 @@ export async function run() {
     out.paypalCreate = { status: co3.status, url: co3.data.url, ref: order3.provider_ref, amount: pp.purchase_units[0].amount, items: pp.purchase_units[0].items.map((i) => `${i.name} ${i.unit_amount.value}`), returnUrl: pp.application_context.return_url.includes(order3.access_key) };
     const v3 = await call("GET", `/api/orders/${order3.id}?key=${order3.access_key}`);
     out.paypalReturn = { orderStatus: v3.data.order.status, captured: calls.some((c) => c.capture), paymentRef: order3.payment_ref };
+    // manual methods: cash app (order stays pending, instructions + reported)
+    const cfg2 = await call("GET", "/api/checkout/config");
+    out.modes = cfg2.data.modes;
+    const ca = await call("POST", "/api/checkout", { email: "d@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 2 }] });
+    const orderCa = db.orders[3], infoCa = JSON.parse(orderCa.payment_info);
+    out.cashapp = { status: ca.status, url: ca.data.url.replace(ORIGIN, ""), orderStatus: orderCa.status, ref: orderCa.provider_ref, info: infoCa, events: db.events.filter((e) => e.order_id === orderCa.id).map((e) => e.type) };
+    const rep1 = await call("POST", `/api/orders/${orderCa.id}/reported?key=${orderCa.access_key}`, {});
+    const rep2 = await call("POST", `/api/orders/${orderCa.id}/reported?key=${orderCa.access_key}`, {});
+    out.reported = { first: rep1.status, reportedAt: rep1.data.order.reportedAt, second: rep2.status, events: db.events.filter((e) => e.order_id === orderCa.id && e.type === "reported").length, wrongKey: (await call("POST", `/api/orders/${orderCa.id}/reported?key=nope`, {})).status };
+    out.reportedOnPaidOrder = (await call("POST", `/api/orders/${order.id}/reported?key=${order.access_key}`, {})).status;
+    // venmo via PayPal keys (payment_source.venmo, payer-action link)
+    const ve = await call("POST", "/api/checkout", { email: "e@example.com", address, shippingMethod: "standard", provider: "venmo", items: [{ id: "c-pump", qty: 1 }] });
+    const ppVenmo = calls.filter((c) => c.paypal).pop().paypal;
+    out.venmoApi = { status: ve.status, url: ve.data.url, ref: db.orders[4].provider_ref, hasVenmoSource: !!(ppVenmo.payment_source && ppVenmo.payment_source.venmo), noAppContext: !ppVenmo.application_context };
+    // venmo manual when PayPal keys are absent
+    const savedPp = env.PAYPAL_CLIENT_ID; env.PAYPAL_CLIENT_ID = "";
+    out.venmoManualMode = (await call("GET", "/api/checkout/config")).data.modes.venmo;
+    const vm = await call("POST", "/api/checkout", { email: "f@example.com", address, shippingMethod: "standard", provider: "venmo", items: [{ id: "c-pump", qty: 1 }] });
+    out.venmoManual = { status: vm.status, info: JSON.parse(db.orders[5].payment_info) };
+    env.PAYPAL_CLIENT_ID = savedPp;
+    // bitcoin via Coinbase Commerce: create, pending, then confirmed; webhook good/bad/duplicate; failed -> cancelled
+    const bc = await call("POST", "/api/checkout", { email: "g@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
+    const orderBc = db.orders[6], ccBody = calls.find((c) => c.coinbase).coinbase;
+    out.bitcoinApi = { status: bc.status, url: bc.data.url, ref: orderBc.provider_ref, charge: { amount: ccBody.local_price, meta: ccBody.metadata.order_id === orderBc.id, redirect: ccBody.redirect_url.includes(orderBc.access_key) } };
+    const bv1 = await call("GET", `/api/orders/${orderBc.id}?key=${orderBc.access_key}`);
+    out.bitcoinPending = { orderStatus: bv1.data.order.status, info: bv1.data.order.paymentInfo };
+    fake.ccStatus = "COMPLETED";
+    const bv2 = await call("GET", `/api/orders/${orderBc.id}?key=${orderBc.access_key}`);
+    out.bitcoinPaid = { orderStatus: bv2.data.order.status, paymentRef: orderBc.payment_ref };
+    const bc2 = await call("POST", "/api/checkout", { email: "h@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
+    const orderBc2 = db.orders[7], ccPayload = JSON.stringify({ event: { id: "cc-evt-1", type: "charge:confirmed", data: { code: "CCCODE1", metadata: { order_id: orderBc2.id }, payments: [{ transaction_id: "btc-tx-2" }] } } });
+    const ccKey = await crypto.subtle.importKey("raw", new TextEncoder().encode("cc_whsec_fake"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const ccSig = [...new Uint8Array(await crypto.subtle.sign("HMAC", ccKey, new TextEncoder().encode(ccPayload)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    out.coinbaseWebhook = { bad: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": "00", "Content-Type": "application/json" })).status, ok: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": ccSig, "Content-Type": "application/json" })).status, orderStatus: orderBc2.status, paymentRef: orderBc2.payment_ref, dup: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": ccSig, "Content-Type": "application/json" })).data };
+    const bc3 = await call("POST", "/api/checkout", { email: "i@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
+    const orderBc3 = db.orders[8], failPayload = JSON.stringify({ event: { id: "cc-evt-2", type: "charge:failed", data: { code: "CCCODE1", metadata: { order_id: orderBc3.id } } } });
+    const failSig = [...new Uint8Array(await crypto.subtle.sign("HMAC", ccKey, new TextEncoder().encode(failPayload)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    out.coinbaseFailed = { status: (await call("POST", "/api/webhooks/coinbase", failPayload, { "X-CC-Webhook-Signature": failSig, "Content-Type": "application/json" })).status, orderStatus: orderBc3.status };
+    // bitcoin manual when the Commerce key is absent (spot-rate quote)
+    const savedCc = env.COINBASE_COMMERCE_API_KEY; env.COINBASE_COMMERCE_API_KEY = "";
+    out.bitcoinManualMode = (await call("GET", "/api/checkout/config")).data.modes.bitcoin;
+    const bm = await call("POST", "/api/checkout", { email: "j@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
+    const bmInfo = JSON.parse(db.orders[9].payment_info);
+    out.bitcoinManual = { status: bm.status, btc: bmInfo.btc, rate: bmInfo.rate, expectedBtc: (db.orders[9].total / 100 / 80000).toFixed(8), uri: bmInfo.uri, address: bmInfo.address };
+    env.COINBASE_COMMERCE_API_KEY = savedCc;
+    env.BTC_ADDRESS = "not-an-address"; out.badBtcAddressHidden = (await call("GET", "/api/checkout/config")).data.modes.bitcoin === "api" ? "api (key present)" : "hidden"; env.BTC_ADDRESS = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });

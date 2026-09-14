@@ -7,7 +7,8 @@
      GET/POST /api/blends           DELETE /api/blends/:id
      GET    /api/checkout/config    POST /api/checkout               (starts payment; returns the redirect URL)
      GET    /api/orders             GET  /api/orders/:id?key=…      (owner, admin, or the access key from the order link)
-     POST   /api/webhooks/stripe
+     POST   /api/orders/:id/reported?key=…                            ("I've sent the payment" on manual methods)
+     POST   /api/webhooks/stripe    POST /api/webhooks/coinbase
      GET    /api/admin/orders?status=&q=   GET/POST /api/admin/orders/:id      (role = admin)
    Everything else under /api is 404 JSON; other paths fall through to the static assets (404.html for unknown). */
 import { error } from "./lib.js";
@@ -36,6 +37,7 @@ function sameOrigin(request, url) {   // state-changing calls must come from our
 async function route(request, env, ctx, url) {
   const path = url.pathname, method = request.method;
   if (method === "POST" && path === "/api/webhooks/stripe") return orders.stripeWebhook(request, env, ctx, url);
+  if (method === "POST" && path === "/api/webhooks/coinbase") return orders.coinbaseWebhook(request, env, ctx, url);
   if (method !== "GET" && !sameOrigin(request, url)) return error(403, "Cross-site request blocked.");
   const m = (verb, p) => method === verb && path === p;
   if (m("POST", "/api/auth/signup")) return auth.signup(request, env);
@@ -56,6 +58,7 @@ async function route(request, env, ctx, url) {
   let x;
   if ((x = id(/^\/api\/blends\/([A-Za-z0-9-]{1,64})$/)) && method === "DELETE") return auth.deleteBlend(request, env, x);
   if ((x = id(/^\/api\/orders\/([A-Za-z0-9-]{1,64})$/)) && method === "GET") return orders.getOrder(request, env, ctx, x, url);
+  if ((x = id(/^\/api\/orders\/([A-Za-z0-9-]{1,64})\/reported$/)) && method === "POST") return orders.reportPaid(request, env, ctx, x, url);
   if ((x = id(/^\/api\/admin\/orders\/([A-Za-z0-9-]{1,64})$/))) {
     if (method === "GET") return orders.adminOrder(request, env, ctx, x);
     if (method === "POST") return orders.adminUpdateOrder(request, env, ctx, x, url);

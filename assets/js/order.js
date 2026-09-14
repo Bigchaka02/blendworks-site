@@ -13,7 +13,7 @@
   const STEPS = [["created", "Placed"], ["paid", "Paid"], ["processing", "Blending"], ["shipped", "Shipped"], ["delivered", "Delivered"]];
   const RANK = { pending_payment: 0, paid: 1, processing: 2, shipped: 3, delivered: 4 };
   const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note" };
+  const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note", instructions: "Payment instructions shown", reported: "You told us the payment was sent" };
   BW.orderStatus = (s) => STATUS[s] || { label: s, cls: "" };
   BW.orderBadge = (s) => `<span class="badge ${BW.orderStatus(s).cls}">${BW.orderStatus(s).label}</span>`;
   BW.orderTimeline = (order) => {
@@ -40,8 +40,9 @@
       try { order = (await BW.auth.api(`/api/orders/${encodeURIComponent(id)}${key ? `?key=${encodeURIComponent(key)}` : ""}`)).order; }
       catch (e) { return missing(e.status === 404 ? "This link doesn't match an order. If the order is yours, sign in to see it in your account." : `Couldn't load the order: ${e.message}`); }
       render(order);
-      if (order.status === "pending_payment" && polls++ < 8) setTimeout(load, 3000);   // provider confirmation usually lands within seconds
-      if (order.status !== "pending_payment" && order.status !== "cancelled") {
+      const manual = order.paymentInfo && order.paymentInfo.mode === "manual";
+      if (order.status === "pending_payment" && !manual && polls++ < 8) setTimeout(load, 3000);   // provider confirmation usually lands within seconds
+      if (manual || (order.status !== "pending_payment" && order.status !== "cancelled")) {   // the order exists now — don't let the cart create a second one
         try { if (localStorage.getItem(KEY_PENDING) === order.id) { BW.cart.clear(); localStorage.removeItem(KEY_PENDING); } } catch (e) { /* storage blocked */ }
       }
     }
@@ -49,14 +50,16 @@
       $("[data-order-view]").hidden = false;
       document.title = `Order ${o.number} — BlendWorks`;
       const pending = o.status === "pending_payment", cancelled = o.status === "cancelled" || o.status === "refunded";
+      const info = o.paymentInfo || {}, manual = pending && info.mode === "manual", detected = pending && info.mode === "api" && info.status === "PENDING";
       $("[data-order-eyebrow]").textContent = `Order ${o.number}`;
-      $("[data-order-title]").innerHTML = pending ? "Confirming your <span class=\"grad-text\">payment</span>…" : cancelled ? `Order <span class="grad-text">${o.status}</span>` : "Thank you — <span class=\"grad-text\">you're all set</span>";
-      $("[data-order-sub]").textContent = pending ? "This usually takes a few seconds. Keep this page open." : `Placed ${when(o.createdAt)}${o.paidAt ? ` · paid ${when(o.paidAt)}` : ""}`;
+      $("[data-order-title]").innerHTML = manual ? "One more step — <span class=\"grad-text\">send your payment</span>" : pending ? "Confirming your <span class=\"grad-text\">payment</span>…" : cancelled ? `Order <span class="grad-text">${o.status}</span>` : "Thank you — <span class=\"grad-text\">you're all set</span>";
+      $("[data-order-sub]").textContent = manual ? `Placed ${when(o.createdAt)} · we'll confirm your payment and e-mail you` : detected ? "Payment detected — waiting for network confirmations (usually 10–30 minutes)." : pending ? "This usually takes a few seconds. Keep this page open." : `Placed ${when(o.createdAt)}${o.paidAt ? ` · paid ${when(o.paidAt)}` : ""}`;
+      renderPayBox(o, manual);
       $("[data-order-status]").outerHTML = BW.orderBadge(o.status).replace("<span", '<span data-order-status');
       $("[data-order-steps]").innerHTML = cancelled ? "" : BW.orderTimeline(o);
       const notice = $("[data-order-notice]");
-      notice.hidden = !(pending || cancelled);
-      if (pending) notice.textContent = "If you closed the payment page, your card was not charged — go back to the cart to try again.";
+      notice.hidden = !((pending && !manual && !detected) || cancelled);
+      if (pending) notice.textContent = "If you closed the payment page, nothing was charged — go back to the cart to try again.";
       if (cancelled) notice.textContent = o.status === "refunded" ? "This order was refunded. Your bank may take a few days to show it." : "This order was cancelled and nothing was charged. Your cart is still saved if you want to try again.";
       const tr = $("[data-order-tracking]");
       tr.hidden = !o.tracking;
@@ -70,6 +73,24 @@
       $("[data-order-address]").innerHTML = BW.orderAddress(o.address);
       $("[data-order-email]").textContent = `Updates go to ${o.email}.`;
       $("[data-order-events]").innerHTML = o.events.map((e) => `<li><b>${EVENT_TEXT[e.type] || e.type}</b>${e.detail && e.type !== "created" && e.type !== "paid" ? ` — ${BW.escapeHtml(e.detail)}` : ""}<br><span>${when(e.at)}</span></li>`).join("") || "<li>No updates yet.</li>";
+    }
+    function renderPayBox(o, manual) {
+      let box = $("[data-pay-box]");
+      if (!manual) { if (box) box.remove(); return; }
+      if (!box) { box = document.createElement("div"); box.className = "pay-box mb-2"; box.setAttribute("data-pay-box", ""); $("[data-order-notice]").before(box); }
+      const i = o.paymentInfo, amt = dollars(i.amount), reported = o.reportedAt;
+      const how = i.provider === "cashapp"
+        ? `<p>Open <b>Cash App</b> and send <b>${amt}</b> to <code>${BW.escapeHtml(i.handle)}</code>. Put <code>${BW.escapeHtml(i.memo)}</code> in the note so we can match it to your order.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.link)}" rel="noopener" target="_blank">Open Cash App</a>`
+        : i.provider === "venmo"
+        ? `<p>Open <b>Venmo</b> and send <b>${amt}</b> to <code>${BW.escapeHtml(i.handle)}</code>. Put <code>${BW.escapeHtml(i.memo)}</code> in the note so we can match it to your order.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.link)}" rel="noopener" target="_blank">Open Venmo</a>`
+        : `<p>Send ${i.btc ? `<b>${i.btc} BTC</b> (${amt} at $${Number(i.rate).toLocaleString()} / BTC, quoted ${when(i.quotedAt)})` : `the equivalent of <b>${amt}</b> in BTC`} to this address:</p><p><code class="addr-code">${BW.escapeHtml(i.address)}</code></p><p class="muted small">Send exactly this amount from your own wallet within about 20 minutes of the quote; network fees are yours. We confirm once the transaction arrives.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.uri)}">Open in wallet</a>`;
+      box.innerHTML = `<h2>How to pay</h2>${how}<div class="mt-1">${reported ? `<span class="badge mint">Payment reported ${when(reported)}</span> <span class="muted small">— we'll confirm it and e-mail you.</span>` : `<button class="btn btn-secondary" data-reported>I've sent the payment</button>`}</div>`;
+      const btn = $("[data-reported]", box);
+      if (btn) btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try { const r = await BW.auth.api(`/api/orders/${encodeURIComponent(id)}/reported${key ? `?key=${encodeURIComponent(key)}` : ""}`, { method: "POST", body: {} }); render(r.order); BW.toast("Thanks — we'll confirm your payment shortly."); }
+        catch (e) { btn.disabled = false; BW.toast(e.message); }
+      });
     }
     load();
   });

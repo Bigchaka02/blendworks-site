@@ -567,6 +567,12 @@ textarea.input { min-height: 140px; resize: vertical; }
 .addr { white-space: pre-line; color: var(--muted); margin: 0 0 .5rem; }
 .tracking-box { padding: 1rem 1.25rem; border-radius: var(--r-md); background: rgb(var(--mint-rgb) / .1); border: 1px solid rgb(var(--mint-rgb) / .3); }
 .tracking-box a { color: var(--sky-light); font-weight: 600; }
+.pay-box { padding: 1.25rem 1.5rem; border-radius: var(--r-lg); background: rgb(var(--sky-rgb) / .08); border: 1px solid rgb(var(--sky-rgb) / .35); }
+.pay-box h2 { font-size: 1.15rem; margin-bottom: .6rem; }
+.pay-box p { margin: 0 0 .75rem; color: var(--muted); }
+.pay-box b { color: var(--text); }
+.pay-box code, .addr-code { font-family: "JetBrains Mono", Consolas, monospace; font-size: .92rem; background: rgba(0,0,0,.35); padding: .15rem .45rem; border-radius: 6px; color: var(--sky-light); }
+.addr-code { display: inline-block; word-break: break-all; user-select: all; }
 .events { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; font-size: .88rem; color: var(--muted); }
 .events b { color: var(--text); }
 .admin-detail .events b { text-transform: capitalize; }
