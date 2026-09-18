@@ -1,5 +1,6 @@
 /* Home page: featured grid, ingredient marquee, ambient particles, hero choreography and scroll scenes.
-   Page-level choreography uses GSAP directly behind the BW.motion guard (see decision D16). */
+   Page-level choreography uses GSAP directly behind the BW.motion guard (see decision D16); the ingredient marquee
+   is a CSS animation in styles.css so it runs at a constant speed, independent of scrolling. */
 (function () {
   const { $, $$ } = BW;
   const DOT_GRID = [8, 24];   // rows × columns of the CTA dot grid — must match .cta-band .dots in styles.css
@@ -66,16 +67,7 @@
     }
     // stats count up
     $$("[data-count]").forEach((el) => ScrollTrigger.create({ trigger: el, start: "top 88%", once: true, onEnter: () => BW.motion.countUp(el, Number(el.dataset.count), el.dataset.suffix) }));
-    // marquee: perpetual, speeds up and skews with scroll velocity
-    const track = $("[data-marquee]"), tween = gsap.to(track, { xPercent: -50, repeat: -1, duration: 45, ease: "none" });
-    const proxy = { skew: 0, speed: 1 }, skew = gsap.quickSetter(track, "skewX", "deg"), clampSkew = gsap.utils.clamp(-12, 12), clampSpeed = gsap.utils.clamp(0.4, 6);
-    ScrollTrigger.create({ onUpdate(self) {
-      const v = self.getVelocity(), s = clampSkew(v / -280);
-      if (Math.abs(s) <= Math.abs(proxy.skew)) return;
-      proxy.skew = s;
-      proxy.speed = clampSpeed(1 + Math.abs(v) / 350);
-      gsap.to(proxy, { skew: 0, speed: 1, duration: 1, ease: "power3", overwrite: true, onUpdate() { skew(proxy.skew); tween.timeScale(v < 0 ? -proxy.speed : proxy.speed); } });
-    } });
+    // (the ingredient marquee is a plain CSS animation — constant speed, independent of scrolling)
     // parallax facts card + CTA dot grid
     $$(".split .visual").forEach((v) => gsap.fromTo(v.firstElementChild, { y: 40 }, { y: -40, ease: "none", scrollTrigger: { trigger: v, start: "top bottom", end: "bottom top", scrub: true } }));
     $$(".cta-band .dots").forEach((dots) => {
