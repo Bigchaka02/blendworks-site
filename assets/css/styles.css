@@ -238,10 +238,11 @@ textarea.input { min-height: 140px; resize: vertical; }
 .float-card { position: absolute; width: 250px; display: flex; align-items: flex-start; gap: .8rem; padding: .95rem 1.05rem; border-radius: var(--r-md); background: rgb(var(--bg-3-rgb) / .8); border: 1px solid var(--border-strong); backdrop-filter: blur(12px); box-shadow: var(--sh-2); text-align: left; font-size: .8rem; line-height: 1.45; color: var(--muted); }
 .float-card .n { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; line-height: 1.2; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; flex-shrink: 0; }
 .float-card b { display: block; color: var(--text); font-size: .95rem; margin-bottom: .15rem; }
-.float-card.fc1 { top: 4%; left: 0; }
-.float-card.fc2 { top: 4%; right: 0; }
-.float-card.fc3 { bottom: 6%; left: 0; }
-.float-card.fc4 { bottom: 6%; right: 0; }
+.float-card.fc1 { top: 4%; left: 0; --float-y: 8px; --float-dur: 6.4s; }
+.float-card.fc2 { top: 4%; right: 0; --float-y: -8px; --float-dur: 7.4s; }
+.float-card.fc3 { bottom: 6%; left: 0; --float-y: 8px; --float-dur: 8.4s; }
+.float-card.fc4 { bottom: 6%; right: 0; --float-y: -8px; --float-dur: 9.4s; }
+.float-card.is-floating { animation: float-y var(--float-dur) ease-in-out infinite; }   /* added by home.js after the slide-in; compositor-driven */
 .scroll-cue { position: absolute; left: 50%; bottom: 1.5rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: .5rem; color: var(--muted-2); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; }
 .scroll-cue .mouse { width: 22px; height: 34px; border: 1.5px solid var(--border-strong); border-radius: 12px; position: relative; }
 .scroll-cue .mouse i { position: absolute; left: 50%; top: 6px; width: 3px; height: 7px; margin-left: -1.5px; border-radius: 2px; background: var(--sky-light); }
@@ -597,6 +598,7 @@ textarea.input { min-height: 140px; resize: vertical; }
 @keyframes drift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(6%, -4%) scale(1.08); } 100% { transform: translate(-4%, 6%) scale(.96); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes marquee { to { transform: translateX(-50%); } }
+@keyframes float-y { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(var(--float-y, 8px)); } }
 @keyframes pulse { 0%, 100% { opacity: .55; transform: scale(1); } 50% { opacity: .9; transform: scale(1.08); } }
 @property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
 @keyframes rotateAngle { to { --angle: 360deg; } }
@@ -615,7 +617,7 @@ textarea.input { min-height: 140px; resize: vertical; }
   .hero-visual { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; min-height: auto; place-items: stretch; }
   .hero-visual .glow, .orbit { display: none; }
   .capsule-3d { grid-column: 1 / -1; justify-self: center; width: min(260px, 70%); margin: 1rem 0 2rem; }
-  .float-card { position: static; width: 100%; }
+  .float-card { position: static; width: 100%; animation: none; }
 
   .fmt-grid, .blend-preview, .account-grid, .blend-row { grid-template-columns: 1fr; }
   .order-step { font-size: .7rem; }

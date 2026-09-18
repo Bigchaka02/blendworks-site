@@ -1,6 +1,6 @@
 /* Home page: featured grid, ingredient marquee, ambient particles, hero choreography and scroll scenes.
-   Page-level choreography uses GSAP directly behind the BW.motion guard (see decision D16); the ingredient marquee
-   is a CSS animation in styles.css so it runs at a constant speed, independent of scrolling. */
+   Page-level choreography uses GSAP directly behind the BW.motion guard (see decision D16); the two perpetual
+   loops (marquee, floating cards) are CSS animations in styles.css so they stay smooth whatever the main thread does. */
 (function () {
   const { $, $$ } = BW;
   const DOT_GRID = [8, 24];   // rows × columns of the CTA dot grid — must match .cta-band .dots in styles.css
@@ -52,7 +52,10 @@
       .fromTo(".float-card", { x: (i) => (i % 2 ? 70 : -70), autoAlpha: 0 }, { x: 0, autoAlpha: 1, duration: 1.1, stagger: 0.12 }, 1)
       .fromTo(".scroll-cue", { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.8 }, 1.6);
     gsap.to(".capsule-3d", { y: -16, rotation: 3, duration: 3.6, yoyo: true, repeat: -1, ease: "sine.inOut", delay: 1.8 });
-    if (BW.motion.desktop) $$(".float-card").forEach((c, i) => gsap.to(c, { y: i % 2 ? -8 : 8, duration: 3.2 + i * 0.5, yoyo: true, repeat: -1, ease: "sine.inOut", delay: 2 }));
+    // The cards' perpetual float is a CSS animation (.float-card.is-floating) that runs on the compositor: a JS-driven
+    // translate this slow and small can render as whole-pixel steps and stalls whenever the main thread is busy, which
+    // read as "inching". The class goes on once the slide-in has finished so the two never fight over transform.
+    tl.call(() => $$(".float-card").forEach((c) => c.classList.add("is-floating")), null, 2.6);
     gsap.to(".scroll-cue .mouse i", { y: 12, autoAlpha: 0, duration: 1.4, repeat: -1, ease: "power2.in", delay: 2 });
   }
 
