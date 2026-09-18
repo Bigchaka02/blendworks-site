@@ -3,7 +3,10 @@
 import { HttpError, json, error, noContent, guard, readJson, cookies, cookie, withHeaders, b64, unb64, enc, randomToken, sha256hex, timingEqual, str, normEmail, validEmail, now, ip } from "./lib.js";
 
 const SESSION_DAYS = 30;
-const PBKDF2_ITERATIONS = 100000;      // Workers cap PBKDF2 at 100k; hashes record their own count so it can be raised later
+// Workers Free allows ~10 ms of CPU per request and PBKDF2 costs ~0.1 ms per 1,000 iterations here, so 25k keeps a login
+// (one derivation) or a password change (two) well inside the budget. Hashes record their own count: raise this later (the
+// platform caps it at 100k) and each user is re-hashed transparently on their next login (D35).
+const PBKDF2_ITERATIONS = 25000;
 const MAX_BLENDS_PER_USER = 50;
 const RATE = {                          // key -> [max attempts, window seconds]
   "login:ip": [30, 900], "login:email": [10, 900], "signup:ip": [8, 3600], "password:user": [10, 900], "checkout:ip": [30, 3600]
@@ -42,6 +45,7 @@ async function verifyPassword(password, stored) {
   const bits = await pbkdf2(password, unb64(salt), Number(iter));
   return timingEqual(new Uint8Array(bits), unb64(hash));
 }
+const needsRehash = (stored) => Number(String(stored || "").split("$")[1]) !== PBKDF2_ITERATIONS;
 function checkPassword(pw) {
   if (typeof pw !== "string" || pw.length < 8) throw new HttpError(400, "Use a password of at least 8 characters.");
   if (pw.length > 200) throw new HttpError(400, "That password is too long.");
@@ -123,6 +127,7 @@ export const login = guard(async (request, env) => {
     await recordAttempt(env, "login:email", email);
     throw new HttpError(401, "Incorrect email or password.");
   }
+  if (needsRehash(user.password_hash)) await env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").bind(await hashPassword(password), now(), user.id).run();   // migrate to the current cost
   const token = await createSession(env, request, user.id);
   return withHeaders(json({ ok: true, user: publicUser(user) }), sessionHeaders(token));
 });
