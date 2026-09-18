@@ -508,6 +508,7 @@ textarea.input { min-height: 140px; resize: vertical; }
 .auth-card .form-grid { grid-template-columns: 1fr; }
 .auth-foot { margin-top: 1.25rem; text-align: center; color: var(--muted); font-size: .92rem; }
 .auth-foot a, .check a { color: var(--sky-light); font-weight: 600; }
+.field.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }   /* contact-form honeypot */
 .form-error { padding: .75rem 1rem; border-radius: var(--r-md); background: rgb(var(--danger-rgb) / .12); border: 1px solid rgb(var(--danger-rgb) / .35); color: #FCA5A5; font-size: .9rem; }
 .pw-field { position: relative; }
 .pw-field .input { padding-right: 4.6rem; }

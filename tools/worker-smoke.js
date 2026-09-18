@@ -1,8 +1,9 @@
 /* Offline smoke test for worker/*.js — run in the browser against the local preview (python serve.py):
      const t = await import("/tools/worker-smoke.js"); await t.run();
    Uses an in-memory stand-in for D1 and fakes the Stripe / PayPal / Resend HTTP endpoints, so the checkout, payment
-   confirmation, webhook and pricing code paths run without secrets. Browsers strip Cookie/Set-Cookie/Origin from
-   page-created requests, so session-based routes (account, admin) are covered live with curl instead. Not deployed
+   confirmation, webhook, pricing, sign-up, e-mail verification, password reset and contact-form code paths run without
+   secrets. Browsers strip Cookie/Set-Cookie/Origin from page-created requests, so session-based routes (account,
+   admin, re-send verification) are covered live with curl instead. Not deployed
    (tools/ is in .assetsignore). */
 export async function run() {
   if (!crypto.subtle.timingSafeEqual) crypto.subtle.timingSafeEqual = (a, b) => { const x = new Uint8Array(a), y = new Uint8Array(b); let d = x.length ^ y.length; for (let i = 0; i < Math.min(x.length, y.length); i++) d |= x[i] ^ y[i]; return d === 0; };
@@ -10,13 +11,25 @@ export async function run() {
   const ORIGIN = "https://blendworks.fit", now = () => Math.floor(Date.now() / 1000);
 
   /* ---------- in-memory D1 ---------- */
-  const db = { users: [], sessions: [], attempts: [], orders: [], events: [], webhooks: [] };
+  const db = { users: [], sessions: [], tokens: [], attempts: [], orders: [], events: [], webhooks: [] };
   const stmt = (row, rows) => ({ first: async () => row || null, run: async () => ({}), all: async () => ({ results: rows || (row ? [row] : []) }) });
   function exec(sql, p) {
     sql = sql.replace(/\s+/g, " ").trim();
     if (sql.startsWith("SELECT COUNT(*) AS n FROM auth_attempts")) return stmt({ n: db.attempts.filter((a) => a.key === p[0] && a.at > p[1]).length });
     if (sql.startsWith("INSERT INTO auth_attempts")) { db.attempts.push({ key: p[0], at: p[1] }); return stmt(null); }
     if (sql.startsWith("DELETE FROM auth_attempts")) return stmt(null);
+    if (sql.startsWith("SELECT id FROM users WHERE email = ?") || sql.startsWith("SELECT * FROM users WHERE email = ?")) return stmt(db.users.find((u) => u.email === p[0]));
+    if (sql.startsWith("INSERT INTO users")) { db.users.push({ id: p[0], email: p[1], name: p[2], password_hash: p[3], created_at: p[4], updated_at: p[5], role: "customer", email_verified_at: null }); return stmt(null); }
+    if (sql.startsWith("INSERT INTO sessions")) { db.sessions.push({ id: p[0], user_id: p[1] }); return stmt(null); }
+    if (sql.startsWith("DELETE FROM sessions WHERE expires_at")) return stmt(null);
+    if (sql.startsWith("DELETE FROM sessions WHERE user_id = ?")) { db.sessions = db.sessions.filter((x) => x.user_id !== p[0]); return stmt(null); }
+    if (sql.startsWith("UPDATE users SET password_hash = ?, email_verified_at = COALESCE")) { const u = db.users.find((x) => x.id === p[3]); Object.assign(u, { password_hash: p[0], email_verified_at: u.email_verified_at || p[1], updated_at: p[2] }); return stmt(null); }
+    if (sql.startsWith("UPDATE users SET password_hash = ?, updated_at = ?")) { const u = db.users.find((x) => x.id === p[2]); Object.assign(u, { password_hash: p[0], updated_at: p[1] }); return stmt(null); }
+    if (sql.startsWith("UPDATE users SET email_verified_at = COALESCE")) { const u = db.users.find((x) => x.id === p[2]); u.email_verified_at = u.email_verified_at || p[0]; u.updated_at = p[1]; return stmt(null); }
+    if (sql.startsWith("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?")) { db.tokens = db.tokens.filter((k) => !(k.user_id === p[0] && k.kind === p[1])); return stmt(null); }
+    if (sql.startsWith("INSERT INTO email_tokens")) { db.tokens.push({ id: p[0], user_id: p[1], kind: p[2], email: p[3], created_at: p[4], expires_at: p[5], used_at: null }); return stmt(null); }
+    if (sql.startsWith("SELECT k.email AS token_email")) { const k = db.tokens.find((x) => x.id === p[0] && x.kind === p[1] && x.used_at === null && x.expires_at > p[2]); const u = k && db.users.find((x) => x.id === k.user_id); return stmt(k && u ? Object.assign({ token_email: k.email, expires_at: k.expires_at }, u) : null); }
+    if (sql.startsWith("UPDATE email_tokens SET used_at = ?")) { const k = db.tokens.find((x) => x.id === p[1]); if (k) k.used_at = p[0]; return stmt(null); }
     if (sql.startsWith("INSERT INTO orders")) {
       const number = db.orders.reduce((m, o) => Math.max(m, o.number), 1000) + 1;
       db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
@@ -43,9 +56,12 @@ export async function run() {
     ASSETS: { fetch: (u) => fetch(new URL(u).pathname) },   // the local preview serves the JSON data files
     SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret",
     CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit",
-    ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC"
+    ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC",
+    RESEND_API_KEY: "re_fake", EMAIL_FROM: "BlendWorks <contact.blendworks@blendworks.fit>", CONTACT_EMAIL: "contact.blendworks@blendworks.fit"
   };
-  const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
+  const pending = [];   // waitUntil work (e-mails) — awaited with settle() before reading the outbox
+  const ctx = { waitUntil: (p) => pending.push(p.catch((e) => console.error("waitUntil", e))) };
+  const settle = () => Promise.all(pending);
 
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
@@ -69,7 +85,7 @@ export async function run() {
     if (url.endsWith("/v2/checkout/orders")) { const body = JSON.parse(init.body); calls.push({ paypal: body }); const venmo = !!(body.payment_source && body.payment_source.venmo); return new Response(JSON.stringify({ id: venmo ? "PP-VENMO-1" : "PP-ORDER-1", status: venmo ? "PAYER_ACTION_REQUIRED" : "CREATED", links: [{ rel: venmo ? "payer-action" : "approve", href: venmo ? "https://www.sandbox.paypal.com/venmo?token=PP-VENMO-1" : "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1")) return new Response(JSON.stringify({ id: "PP-ORDER-1", status: fake.paypalStatus }));
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1/capture")) { calls.push({ capture: true }); return new Response(JSON.stringify({ id: "PP-ORDER-1", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP-1" }] } }] })); }
-    if (url.startsWith("https://api.resend.com/")) { calls.push({ email: JSON.parse(init.body).subject }); return new Response("{}"); }
+    if (url.startsWith("https://api.resend.com/")) { const m = JSON.parse(init.body); calls.push({ email: m.subject, to: m.to, from: m.from, html: m.html, replyTo: m.reply_to || null }); return new Response("{}"); }
     return realFetch(input, init);
   };
   const call = async (method, path, body, headers = {}) => {
@@ -185,6 +201,36 @@ export async function run() {
     const zeOff = await call("POST", "/api/checkout", { email: "n@example.com", address, shippingMethod: "standard", provider: "zelle", items: [{ id: "p-ignite", qty: 1 }] });
     out.walletsRefused = { applepay: `${apOff.status} ${apOff.data.error}`, zelle: `${zeOff.status} ${zeOff.data.error}` };
     env.STRIPE_SECRET_KEY = savedSk; env.ZELLE_CONTACT = savedZe;
+    // accounts + e-mail: sign-up sends a verification link; verify; forgot -> reset -> login with the new password; contact form
+    const lastMail = (re) => calls.filter((c) => c.email && re.test(c.email)).pop();
+    const su = await call("POST", "/api/auth/signup", { name: "QA", email: "qa@example.com", password: "Password-123" });
+    await settle();
+    const mailV = lastMail(/Confirm your e-mail/), tokenV = mailV && (mailV.html.match(/verify\?token=([A-Za-z0-9_-]+)/) || [])[1];
+    out.signup = { status: su.status, verified: su.data.user.emailVerified, mailTo: mailV && mailV.to, from: mailV && mailV.from, hasToken: !!tokenV, hashIter: db.users[0].password_hash.split("$")[1] };
+    out.verifyBad = (await call("POST", "/api/auth/verify", { token: "nope" })).status;
+    const vr = await call("POST", "/api/auth/verify", { token: tokenV });
+    out.verify = { status: vr.status, email: vr.data.email, verifiedAt: !!db.users[0].email_verified_at, reuse: (await call("POST", "/api/auth/verify", { token: tokenV })).status };
+    const fg = await call("POST", "/api/auth/forgot", { email: "qa@example.com" });
+    await settle();
+    const mailR = lastMail(/Reset your BlendWorks password/), tokenR = mailR && (mailR.html.match(/reset\?token=([A-Za-z0-9_-]+)/) || [])[1];
+    const mailsBefore = calls.filter((c) => c.email).length;
+    out.forgot = { status: fg.status, mailTo: mailR && mailR.to, hasToken: !!tokenR, unknownEmail: (await call("POST", "/api/auth/forgot", { email: "nobody@example.com" })).status };
+    await settle();
+    out.forgot.noMailForUnknown = calls.filter((c) => c.email).length === mailsBefore;
+    const rs = await call("POST", "/api/auth/reset", { token: tokenR, password: "New-Password-456" });
+    out.reset = { status: rs.status, email: rs.data.email, oldLogin: (await call("POST", "/api/auth/login", { email: "qa@example.com", password: "Password-123" })).status,
+      newLogin: (await call("POST", "/api/auth/login", { email: "qa@example.com", password: "New-Password-456" })).status, reuse: (await call("POST", "/api/auth/reset", { token: tokenR, password: "Another-789" })).status, weak: (await call("POST", "/api/auth/reset", { token: "x", password: "short" })).status };
+    const ct = await call("POST", "/api/contact", { name: "QA Buyer", email: "buyer@example.com", topic: "Order or shipping", message: "Where is my order BW-1001?" });
+    const mailC = lastMail(/\[Contact\]/), mailsC = calls.filter((c) => c.email).length;
+    out.contact = { status: ct.status, to: mailC && mailC.to, subject: mailC && mailC.email, replyTo: mailC && mailC.replyTo, tooShort: (await call("POST", "/api/contact", { name: "QA", email: "b@example.com", message: "hi" })).status,
+      honeypot: (await call("POST", "/api/contact", { name: "Bot", email: "b@example.com", message: "buy stuff now please", website: "http://spam" })).status, noMailForBot: calls.filter((c) => c.email).length === mailsC };
+    const savedKey = env.RESEND_API_KEY; env.RESEND_API_KEY = "";
+    const mailsOff = calls.filter((c) => c.email).length;
+    out.emailOff = { forgot: (await call("POST", "/api/auth/forgot", { email: "qa@example.com" })).status, contact: (await call("POST", "/api/contact", { name: "QA Buyer", email: "buyer@example.com", message: "Hello there, question." })).status,
+      signup: (await call("POST", "/api/auth/signup", { name: "QA2", email: "qa2@example.com", password: "Password-123" })).status };
+    await settle();
+    out.emailOff.noMails = calls.filter((c) => c.email).length === mailsOff;
+    env.RESEND_API_KEY = savedKey;
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });

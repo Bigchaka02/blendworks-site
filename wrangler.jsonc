@@ -20,8 +20,11 @@
   //   VENMO_HANDLE "@your-venmo" (used only when the PayPal keys are absent — with PayPal, Venmo is automatic)
   //   ZELLE_CONTACT "the e-mail or US phone enrolled with Zelle"  ZELLE_NAME "the recipient name the bank shows" (Zelle is manual only)
   //   Apple Pay and Google Pay need no vars: they appear on the Stripe-hosted page once STRIPE_SECRET_KEY exists.
-  "vars": { "SITE_URL": "https://blendworks.fit", "CASHAPP_CASHTAG": "", "VENMO_HANDLE": "", "ZELLE_CONTACT": "", "ZELLE_NAME": "" },
+  //   EMAIL_FROM / CONTACT_EMAIL: the site's sending identity (Resend, once RESEND_API_KEY exists) and where contact-form
+  //   messages go. Both are addresses on blendworks.fit; inbound mail for them is forwarded by Cloudflare Email Routing.
+  "vars": { "SITE_URL": "https://blendworks.fit", "CASHAPP_CASHTAG": "", "VENMO_HANDLE": "", "ZELLE_CONTACT": "", "ZELLE_NAME": "",
+    "EMAIL_FROM": "BlendWorks <contact.blendworks@blendworks.fit>", "CONTACT_EMAIL": "contact.blendworks@blendworks.fit" },
   // Secrets (dashboard -> Worker -> Settings -> Variables and Secrets), never here:
-  //   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, RESEND_API_KEY, EMAIL_FROM
+  //   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, RESEND_API_KEY
   "observability": { "enabled": true }
 }

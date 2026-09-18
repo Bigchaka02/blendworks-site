@@ -1,6 +1,6 @@
 {
   "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'canonical': false = no canonical/og:url (404).",
-  "version": "20260917d",
+  "version": "20260917e",
   "site": "https://blendworks.fit",
   "pages": {
     "index": {
@@ -142,6 +142,18 @@
         "order",
         "admin"
       ],
+      "noindex": true
+    },
+    "reset": {
+      "path": "/reset",
+      "title": "Choose a new password — BlendWorks",
+      "description": "Set a new password for your BlendWorks account.",
+      "noindex": true
+    },
+    "verify": {
+      "path": "/verify",
+      "title": "Confirm your e-mail — BlendWorks",
+      "description": "Confirm the e-mail address on your BlendWorks account.",
       "noindex": true
     }
   }

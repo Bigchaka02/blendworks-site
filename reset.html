@@ -5,16 +5,16 @@
 <!-- generated from tools/pages.json by tools/sync_pages.py; edit those, not this block -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in — BlendWorks</title>
-<meta name="description" content="Sign in to your BlendWorks account.">
+<title>Choose a new password — BlendWorks</title>
+<meta name="description" content="Set a new password for your BlendWorks account.">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0B1020">
-<link rel="canonical" href="https://blendworks.fit/login">
+<link rel="canonical" href="https://blendworks.fit/reset">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="BlendWorks">
-<meta property="og:url" content="https://blendworks.fit/login">
-<meta property="og:title" content="Sign in — BlendWorks">
-<meta property="og:description" content="Sign in to your BlendWorks account.">
+<meta property="og:url" content="https://blendworks.fit/reset">
+<meta property="og:title" content="Choose a new password — BlendWorks">
+<meta property="og:description" content="Set a new password for your BlendWorks account.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,30 +24,23 @@
 <link rel="stylesheet" href="/assets/css/styles.css?v=20260917e">
 <!-- /bw:head -->
 </head>
-<body data-page="login">
+<body data-page="reset">
 <header id="site-header"></header>
 <main>
 <section class="section pt-2">
   <div class="container auth-wrap">
     <div class="card auth-card">
-      <div class="eyebrow">Welcome back</div>
-      <h1>Sign in</h1>
-      <p class="muted">Your saved blends and account settings.</p>
-      <form class="form-grid" data-login-form novalidate>
+      <div class="eyebrow">Password reset</div>
+      <h1>Choose a new password</h1>
+      <p class="muted" data-reset-intro>Pick a new password for your account. The link in your e-mail works once, for one hour.</p>
+      <form class="form-grid" data-reset-form novalidate>
         <div class="form-error" data-error hidden></div>
-        <div class="field"><label for="l-email">Email</label><input class="input" id="l-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
-        <div class="field pw-field"><label for="l-password">Password</label><input class="input" id="l-password" name="password" type="password" autocomplete="current-password" required placeholder="Your password"><button type="button" class="toggle" data-toggle-password="l-password">Show</button></div>
-        <button class="btn btn-primary btn-lg btn-block" type="submit">Sign in</button>
-        <p class="auth-foot m-0"><a href="#" data-forgot>Forgot your password?</a></p>
+        <div class="field pw-field"><label for="r-password">New password</label><input class="input" id="r-password" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters"><button type="button" class="toggle" data-toggle-password="r-password">Show</button></div>
+        <div class="field"><label for="r-confirm">Confirm new password</label><input class="input" id="r-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8" placeholder="Same again"></div>
+        <button class="btn btn-primary btn-lg btn-block" type="submit">Save new password</button>
       </form>
-      <form class="form-grid" data-forgot-form novalidate hidden>
-        <p class="muted m-0">Enter your account e-mail and we'll send a link to choose a new password.</p>
-        <div class="form-error" data-error hidden></div>
-        <div class="field"><label for="f-email">Email</label><input class="input" id="f-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
-        <button class="btn btn-primary btn-lg btn-block" type="submit">Send reset link</button>
-        <p class="auth-foot m-0"><a href="#" data-forgot-back>Back to sign in</a></p>
-      </form>
-      <p class="auth-foot">New here? <a href="/signup" data-switch-link>Create an account</a></p>
+      <div class="notice" data-reset-missing hidden>This page needs the link from your reset e-mail. <a href="/login">Back to sign in</a> and choose "Forgot your password?" to get a new one.</div>
+      <p class="auth-foot">Remembered it? <a href="/login">Sign in</a></p>
     </div>
   </div>
 </section>

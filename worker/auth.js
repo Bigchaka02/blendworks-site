@@ -1,6 +1,7 @@
-/* Accounts: password hashing, sessions, rate limiting, and the /api/auth + /api/me + /api/blends handlers.
-   Tables: users, sessions, auth_attempts, blends (worker/schema.sql). */
+/* Accounts: password hashing, sessions, rate limiting, e-mail verification + password reset (tokens by e-mail), and the
+   /api/auth + /api/me + /api/blends handlers. Tables: users, sessions, auth_attempts, email_tokens, blends (worker/schema.sql). */
 import { HttpError, json, error, noContent, guard, readJson, cookies, cookie, withHeaders, b64, unb64, enc, randomToken, sha256hex, timingEqual, str, normEmail, validEmail, now, ip } from "./lib.js";
+import { sendEmail, emailEnabled, esc, layout, button } from "./email.js";
 
 const SESSION_DAYS = 30;
 // Workers Free allows ~10 ms of CPU per request and PBKDF2 costs ~0.1 ms per 1,000 iterations here, so 25k keeps a login
@@ -9,8 +10,11 @@ const SESSION_DAYS = 30;
 const PBKDF2_ITERATIONS = 25000;
 const MAX_BLENDS_PER_USER = 50;
 const RATE = {                          // key -> [max attempts, window seconds]
-  "login:ip": [30, 900], "login:email": [10, 900], "signup:ip": [8, 3600], "password:user": [10, 900], "checkout:ip": [30, 3600]
+  "login:ip": [30, 900], "login:email": [10, 900], "signup:ip": [8, 3600], "password:user": [10, 900], "checkout:ip": [30, 3600],
+  "forgot:ip": [5, 3600], "forgot:email": [3, 3600], "verify:user": [3, 3600], "contact:ip": [5, 3600]
 };
+const TOKEN_TTL = { verify: 86400, reset: 3600 };   // seconds a verification / reset link stays valid
+const siteUrl = (env, url) => (env.SITE_URL || url.origin).replace(/\/$/, "");
 const DUMMY_HASH = `pbkdf2$${PBKDF2_ITERATIONS}$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=`;
 const SESSION_COOKIE = "bw_session";   // HttpOnly session token
 const FLAG_COOKIE = "bw_u";            // readable "signed in" flag so the front end can skip /api/me when logged out
@@ -50,7 +54,7 @@ function checkPassword(pw) {
   if (typeof pw !== "string" || pw.length < 8) throw new HttpError(400, "Use a password of at least 8 characters.");
   if (pw.length > 200) throw new HttpError(400, "That password is too long.");
 }
-export const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role || "customer", createdAt: u.created_at });
+export const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name, role: u.role || "customer", emailVerified: !!u.email_verified_at, createdAt: u.created_at });
 
 /* ---------- rate limiting (D1 auth_attempts) ---------- */
 export async function assertRate(env, kind, id) {
@@ -92,8 +96,29 @@ export async function requireAdmin(env, request) {
   return s;
 }
 
+/* ---------- e-mailed tokens: verification + password reset (stored hashed, single use, one live token per kind) ---------- */
+async function issueToken(env, userId, kind, email) {
+  const token = randomToken(), t = now();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?").bind(userId, kind),
+    env.DB.prepare("INSERT INTO email_tokens (id, user_id, kind, email, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)").bind(await sha256hex(token), userId, kind, email, t, t + TOKEN_TTL[kind])
+  ]);
+  return token;
+}
+async function consumeToken(env, token, kind) {   // -> the token row joined with its user, or a 400
+  const id = await sha256hex(str(token, 200)), t = now();
+  const row = await env.DB.prepare("SELECT k.email AS token_email, k.expires_at, u.* FROM email_tokens k JOIN users u ON u.id = k.user_id WHERE k.id = ? AND k.kind = ? AND k.used_at IS NULL AND k.expires_at > ?").bind(id, kind, t).first();
+  if (!row) throw new HttpError(400, kind === "reset" ? "This reset link is invalid or has expired — request a new one." : "This verification link is invalid or has expired — request a new one from your account page.");
+  await env.DB.prepare("UPDATE email_tokens SET used_at = ? WHERE id = ?").bind(t, id).run();
+  return row;
+}
+async function sendVerification(env, user, base) {
+  const link = `${base}/verify?token=${await issueToken(env, user.id, "verify", user.email)}`;
+  return sendEmail(env, user.email, "Confirm your e-mail for BlendWorks", layout("Confirm your e-mail", `<p>Hi${user.name ? " " + esc(user.name) : ""}, tap the button to confirm this address for your BlendWorks account. The link works for 24 hours.</p>${button(link, "Confirm e-mail")}<p style="color:#777;font-size:12px">Didn't create an account? Ignore this e-mail.</p>`));
+}
+
 /* ---------- auth handlers ---------- */
-export const signup = guard(async (request, env) => {
+export const signup = guard(async (request, env, ctx, url) => {
   const body = await readJson(request);
   const name = str(body.name, 80), email = normEmail(body.email), password = body.password;
   if (!validEmail(email)) throw new HttpError(400, "Enter a valid email address.");
@@ -110,8 +135,55 @@ export const signup = guard(async (request, env) => {
     if (/UNIQUE/.test(String(e))) throw new HttpError(409, "An account with this email already exists — try signing in.");
     throw e;
   }
+  if (emailEnabled(env)) ctx.waitUntil(sendVerification(env, { id, email, name }, siteUrl(env, url)).catch((e) => console.error("verification e-mail", e && e.message)));
   const token = await createSession(env, request, id);
-  return withHeaders(json({ ok: true, user: { id, email, name, role: "customer", createdAt: t } }, 201), sessionHeaders(token));
+  return withHeaders(json({ ok: true, user: { id, email, name, role: "customer", emailVerified: false, createdAt: t } }, 201), sessionHeaders(token));
+});
+
+export const forgot = guard(async (request, env, ctx, url) => {   // always answers ok so addresses can't be probed
+  const body = await readJson(request), email = normEmail(body.email);
+  if (!validEmail(email)) throw new HttpError(400, "Enter the email address of your account.");
+  if (!emailEnabled(env)) throw new HttpError(503, "Password-reset e-mails aren't switched on yet — contact us and we'll help you get back in.");
+  await assertRate(env, "forgot:ip", ip(request));
+  await assertRate(env, "forgot:email", email);
+  await recordAttempt(env, "forgot:ip", ip(request));
+  await recordAttempt(env, "forgot:email", email);
+  const user = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first();
+  if (user) {
+    const link = `${siteUrl(env, url)}/reset?token=${await issueToken(env, user.id, "reset", user.email)}`;
+    ctx.waitUntil(sendEmail(env, user.email, "Reset your BlendWorks password", layout("Reset your password", `<p>Hi${user.name ? " " + esc(user.name) : ""}, someone asked to reset the password for this account. The link works for one hour and can be used once.</p>${button(link, "Choose a new password")}<p style="color:#777;font-size:12px">If that wasn't you, ignore this e-mail — your password stays as it is.</p>`)).catch((e) => console.error("reset e-mail", e && e.message)));
+  }
+  return json({ ok: true });
+});
+
+export const resetPassword = guard(async (request, env) => {
+  const body = await readJson(request);
+  checkPassword(body.password);
+  const row = await consumeToken(env, body.token, "reset");
+  const t = now();
+  await env.DB.batch([   // a reset link proves the address, so it also counts as verification; other devices are signed out
+    env.DB.prepare("UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?").bind(await hashPassword(body.password), t, t, row.id),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(row.id)
+  ]);
+  return json({ ok: true, email: row.email });
+});
+
+export const verifyEmail = guard(async (request, env) => {
+  const body = await readJson(request);
+  const row = await consumeToken(env, body.token, "verify");
+  if (row.token_email !== row.email) throw new HttpError(400, "This link was for a previous e-mail address — request a new one from your account page.");
+  await env.DB.prepare("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?").bind(now(), now(), row.id).run();
+  return json({ ok: true, email: row.email });
+});
+
+export const resendVerification = guard(async (request, env, ctx, url) => {
+  const { user } = await requireUser(env, request);
+  if (user.email_verified_at) return json({ ok: true, already: true });
+  if (!emailEnabled(env)) throw new HttpError(503, "Verification e-mails aren't switched on yet.");
+  await assertRate(env, "verify:user", user.id);
+  await recordAttempt(env, "verify:user", user.id);
+  if (!(await sendVerification(env, user, siteUrl(env, url)))) throw new HttpError(502, "We couldn't send the e-mail just now — please try again in a minute.");
+  return json({ ok: true });
 });
 
 export const login = guard(async (request, env) => {
@@ -151,20 +223,21 @@ export const me = guard(async (request, env) => {
   return json({ ok: true, user: publicUser(s.user) });
 });
 
-export const updateMe = guard(async (request, env) => {
+export const updateMe = guard(async (request, env, ctx, url) => {
   const { user } = await requireUser(env, request);
   const body = await readJson(request), t = now();
-  if (body.email !== undefined) {   // email changes need the password
+  if (body.email !== undefined && normEmail(body.email) !== user.email) {   // email changes need the password and start verification over
     const email = normEmail(body.email);
     if (!validEmail(email)) throw new HttpError(400, "Enter a valid email address.");
     if (!(await verifyPassword(typeof body.password === "string" ? body.password : "", user.password_hash))) throw new HttpError(403, "That password is incorrect.");
     try {
-      await env.DB.prepare("UPDATE users SET email = ?, updated_at = ? WHERE id = ?").bind(email, t, user.id).run();
+      await env.DB.prepare("UPDATE users SET email = ?, email_verified_at = NULL, updated_at = ? WHERE id = ?").bind(email, t, user.id).run();
     } catch (e) {
       if (/UNIQUE/.test(String(e))) throw new HttpError(409, "That email is already used by another account.");
       throw e;
     }
-    user.email = email;
+    user.email = email; user.email_verified_at = null;
+    if (emailEnabled(env)) ctx.waitUntil(sendVerification(env, user, siteUrl(env, url)).catch((e) => console.error("verification e-mail", e && e.message)));
   }
   if (body.name !== undefined) {
     const name = str(body.name, 80);
@@ -198,6 +271,7 @@ export const deleteMe = guard(async (request, env) => {
     env.DB.prepare("UPDATE orders SET user_id = NULL WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM blends WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM email_tokens WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id)
   ]);
   return withHeaders(noContent(), clearHeaders());

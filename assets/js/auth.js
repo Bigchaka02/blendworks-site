@@ -1,6 +1,7 @@
-/* Accounts: BW.auth (API client + signed-in header state) and the sign-up, login and account pages.
-   Loaded on every page after motion.js. The server side is worker/index.js (Cloudflare Worker + D1); sessions are
-   HttpOnly cookies, plus a readable "bw_u" flag so logged-out visitors never hit the API. */
+/* Accounts: BW.auth (API client + signed-in header state) and the sign-up, login, forgot/reset-password, e-mail
+   verification and account pages. Loaded on every page after motion.js. The server side is worker/index.js
+   (Cloudflare Worker + D1); sessions are HttpOnly cookies, plus a readable "bw_u" flag so logged-out visitors never
+   hit the API. E-mails (verification, reset) go out through Resend once the founder adds the key. */
 (function () {
   const { $, $$ } = BW;
   const signedIn = () => /(^|;\s*)bw_u=1(;|$)/.test(document.cookie);
@@ -37,6 +38,11 @@
     blends: () => api("/api/blends").then((d) => d.blends),
     saveBlend: (name, spec) => api("/api/blends", { method: "POST", body: { name, spec } }).then((d) => d.blend),
     deleteBlend: (id) => api(`/api/blends/${id}`, { method: "DELETE", body: {} }),
+    forgot: (email) => api("/api/auth/forgot", { method: "POST", body: { email } }),
+    resetPassword: (token, password) => api("/api/auth/reset", { method: "POST", body: { token, password } }),
+    verifyEmail: (token) => api("/api/auth/verify", { method: "POST", body: { token } }),
+    resendVerification: () => api("/api/me/verify", { method: "POST", body: {} }),
+    contact: (body) => api("/api/contact", { method: "POST", body }),
     // where to send the user after login: a same-site path from ?next=, else the account page
     nextUrl() {
       const n = new URLSearchParams(location.search).get("next") || "";
@@ -105,10 +111,40 @@
       await BW.auth.login({ email: fd.get("email"), password: fd.get("password") });
       location.href = BW.auth.nextUrl();
     }, "Signing in…");
-    $("[data-forgot]").addEventListener("click", (e) => {
-      e.preventDefault();
-      BW.toast("Password reset arrives with our email service. Until then, contact us and we'll help.", { link: { href: "/contact", label: "Contact" }, duration: 6000 });
-    });
+    const forgot = $("[data-forgot-form]");
+    const show = (on) => { form.hidden = on; forgot.hidden = !on; if (on) { $("#f-email").value = $("#f-email").value || $("#l-email").value; $("#f-email").focus(); } };
+    $("[data-forgot]").addEventListener("click", (e) => { e.preventDefault(); show(true); });
+    $("[data-forgot-back]").addEventListener("click", (e) => { e.preventDefault(); show(false); });
+    if (new URLSearchParams(location.search).get("forgot")) show(true);
+    bindForm(forgot, async (fd) => {
+      await BW.auth.forgot(fd.get("email"));
+      forgot.innerHTML = `<div class="notice">If <b>${BW.escapeHtml(String(fd.get("email")))}</b> has an account, a reset link is on its way — check your inbox (and spam) in the next couple of minutes. The link works for one hour.</div><p class="auth-foot m-0 mt-1"><a href="/login">Back to sign in</a></p>`;
+    }, "Sending…");
+  }
+  function resetPage(form) {
+    const token = new URLSearchParams(location.search).get("token") || "";
+    if (!token) { form.hidden = true; $("[data-reset-missing]").hidden = false; return; }
+    bindForm(form, async (fd) => {
+      if (fd.get("password") !== fd.get("confirm")) throw new Error("The two passwords don't match.");
+      const r = await BW.auth.resetPassword(token, fd.get("password"));
+      form.hidden = true;
+      $("[data-reset-intro]").innerHTML = `Done — your password is saved and other devices were signed out. Sign in with <b>${BW.escapeHtml(r.email || "your e-mail")}</b> and the new password.`;
+      setTimeout(() => { location.href = "/login"; }, 2500);
+    }, "Saving…");
+  }
+  async function verifyPage() {
+    const token = new URLSearchParams(location.search).get("token") || "", title = $("[data-verify-title]"), text = $("[data-verify-text]"), actions = $("[data-verify-actions]");
+    const finish = (ok, msg) => {
+      title.textContent = ok ? "E-mail confirmed" : "That link didn't work";
+      text.textContent = msg;
+      actions.innerHTML = ok
+        ? `<a class="btn btn-primary" href="${signedIn() ? "/account" : "/login"}">${signedIn() ? "Go to your account" : "Sign in"}</a><a class="btn btn-secondary" href="/shop">Shop blends</a>`
+        : `<a class="btn btn-primary" href="${signedIn() ? "/account" : "/login"}">${signedIn() ? "Request a new link" : "Sign in"}</a>`;
+      actions.hidden = false;
+    };
+    if (!token) return finish(false, "This page needs the link from your confirmation e-mail.");
+    try { const r = await BW.auth.verifyEmail(token); finish(true, `${r.email || "Your address"} is confirmed. Thanks!`); if (user) user.emailVerified = true; }
+    catch (e) { finish(false, e.message); }
   }
   async function accountPage(root) {
     const u = await BW.auth.me(true);
@@ -122,14 +158,24 @@
       $("[data-member-since]").textContent = new Date(usr.createdAt * 1000).toLocaleDateString(undefined, { year: "numeric", month: "long" });
     };
     fill(u);
+    // e-mail verification nudge (only while unverified)
+    const nudge = $("[data-verify-notice]");
+    const paintNudge = () => { nudge.hidden = !!u.emailVerified; };
+    paintNudge();
+    $("[data-resend-verify]").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      try { const r = await BW.auth.resendVerification(); if (r.already) { u.emailVerified = true; paintNudge(); } BW.toast(r.already ? "Your e-mail is already confirmed." : `Confirmation e-mail sent to ${u.email}.`); }
+      catch (err) { BW.toast(err.message); }
+      setTimeout(() => { e.target.disabled = false; }, 15000);
+    });
     // profile
     bindForm($("[data-profile-form]"), async (fd) => {
       const form = $("[data-profile-form]"), name = fd.get("name"), email = String(fd.get("email")).trim().toLowerCase();
       const body = { name };
       if (email !== u.email) { body.email = email; body.password = fd.get("password"); if (!body.password) throw new Error("Enter your password to change the email address."); }
       const next = await BW.auth.update(body);
-      Object.assign(u, next); fill(u); $("#a-pw-confirm").value = "";
-      busy(form, false); BW.toast("Profile saved.");
+      Object.assign(u, next); fill(u); paintNudge(); $("#a-pw-confirm").value = "";
+      busy(form, false); BW.toast(body.email && !u.emailVerified ? "Profile saved — check your inbox to confirm the new address." : "Profile saved.");
     }, "Saving…");
     // password
     bindForm($("[data-password-form]"), async (fd) => {
@@ -190,6 +236,8 @@
     const page = document.body.dataset.page;
     if (page === "signup") signupPage($("[data-signup-form]"));
     else if (page === "login") loginPage($("[data-login-form]"));
+    else if (page === "reset") resetPage($("[data-reset-form]"));
+    else if (page === "verify") verifyPage();
     else if (page === "account") accountPage($("[data-account]"));
   });
 })();

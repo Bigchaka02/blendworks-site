@@ -68,3 +68,14 @@ CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, provider TEXT NO
 
 -- 2026-09-14: manual payment methods (applied)
 ALTER TABLE orders ADD COLUMN payment_info TEXT;   -- JSON: manual instructions {mode:'manual', provider, handle, name, memo, amount, link} or api info {mode:'api', provider, status|wallet}
+
+-- 2026-09-17: e-mail verification + password reset (applied)
+ALTER TABLE users ADD COLUMN email_verified_at INTEGER;   -- unix seconds; NULL until the verification link (or a reset link) is used
+CREATE TABLE IF NOT EXISTS email_tokens (   -- single-use links sent by e-mail; one live token per user and kind
+  id TEXT PRIMARY KEY,                 -- sha256(token in the link), hex
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                  -- verify | reset
+  email TEXT NOT NULL,                 -- the address the link was sent to (verify links only count for that address)
+  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens (user_id, kind);

@@ -1,10 +1,12 @@
 /* BlendWorks API — Cloudflare Worker module deployed with the static site (wrangler.jsonc: main + assets + D1).
-   Routing only; the handlers live in worker/auth.js (accounts, saved blends) and worker/orders.js (checkout, orders,
-   payments, fulfilment). All routes are JSON, same-origin only (state changes need an Origin header matching the
-   site and a JSON content type), except the Stripe webhook which is verified by signature instead.
+   Routing only; the handlers live in worker/auth.js (accounts, saved blends, e-mail verification, password reset),
+   worker/orders.js (checkout, orders, payments, fulfilment) and worker/email.js (Resend, contact form). All routes are
+   JSON, same-origin only (state changes need an Origin header matching the site and a JSON content type), except the
+   Stripe webhook which is verified by signature instead.
 
-     POST   /api/auth/signup | login | logout | logout-all          GET/PATCH/DELETE /api/me    POST /api/me/password
-     GET/POST /api/blends           DELETE /api/blends/:id
+     POST   /api/auth/signup | login | logout | logout-all | forgot | reset | verify
+     GET/PATCH/DELETE /api/me       POST /api/me/password           POST /api/me/verify   (re-send the verification mail)
+     GET/POST /api/blends           DELETE /api/blends/:id          POST /api/contact
      GET    /api/checkout/config    POST /api/checkout               (starts payment; returns the redirect URL)
      GET    /api/orders             GET  /api/orders/:id?key=…      (owner, admin, or the access key from the order link)
      POST   /api/orders/:id/reported?key=…                            ("I've sent the payment" on manual methods)
@@ -14,6 +16,7 @@
 import { error } from "./lib.js";
 import * as auth from "./auth.js";
 import * as orders from "./orders.js";
+import * as email from "./email.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -39,13 +42,18 @@ async function route(request, env, ctx, url) {
   if (method === "POST" && path === "/api/webhooks/stripe") return orders.stripeWebhook(request, env, ctx, url);
   if (method !== "GET" && !sameOrigin(request, url)) return error(403, "Cross-site request blocked.");
   const m = (verb, p) => method === verb && path === p;
-  if (m("POST", "/api/auth/signup")) return auth.signup(request, env);
+  if (m("POST", "/api/auth/signup")) return auth.signup(request, env, ctx, url);
   if (m("POST", "/api/auth/login")) return auth.login(request, env);
   if (m("POST", "/api/auth/logout")) return auth.logout(request, env);
   if (m("POST", "/api/auth/logout-all")) return auth.logoutAll(request, env);
+  if (m("POST", "/api/auth/forgot")) return auth.forgot(request, env, ctx, url);
+  if (m("POST", "/api/auth/reset")) return auth.resetPassword(request, env);
+  if (m("POST", "/api/auth/verify")) return auth.verifyEmail(request, env);
   if (m("GET", "/api/me")) return auth.me(request, env);
-  if (m("PATCH", "/api/me")) return auth.updateMe(request, env);
+  if (m("PATCH", "/api/me")) return auth.updateMe(request, env, ctx, url);
   if (m("POST", "/api/me/password")) return auth.changePassword(request, env);
+  if (m("POST", "/api/me/verify")) return auth.resendVerification(request, env, ctx, url);
+  if (m("POST", "/api/contact")) return email.contact(request, env);
   if (m("DELETE", "/api/me")) return auth.deleteMe(request, env);
   if (m("GET", "/api/blends")) return auth.listBlends(request, env);
   if (m("POST", "/api/blends")) return auth.saveBlend(request, env);

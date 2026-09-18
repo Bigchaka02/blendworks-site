@@ -15,11 +15,12 @@
      zelle    MANUAL with var ZELLE_CONTACT (the e-mail or US phone enrolled with Zelle) + optional ZELLE_NAME (the
               recipient name the customer's bank will show); Zelle has no merchant API, so it is manual only
      test     admin accounts only: completes an order without charging, to rehearse fulfilment
-     RESEND_API_KEY, EMAIL_FROM  order e-mails (skipped when absent)
+     RESEND_API_KEY (secret) + EMAIL_FROM (var)  order e-mails through worker/email.js (skipped when absent)
    "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
    "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden. */
 import { HttpError, json, error, noContent, guard, readJson, str, normEmail, validEmail, now, ip, randomToken, hmacHex, timingEqual, enc, money } from "./lib.js";
 import { currentSession, requireUser, requireAdmin, checkSpecShape, assertRate, recordAttempt } from "./auth.js";
+import { sendEmail, esc, layout } from "./email.js";
 
 export const SHIPPING_METHODS = {   // PLACEHOLDER rates (founder to-do); cents
   standard: { label: "Standard", eta: "3–5 business days", rate: 595, freeOver: 5000 },
@@ -436,20 +437,12 @@ export const adminUpdateOrder = guard(async (request, env, ctx, id, url) => {
   return json({ ok: true, order: orderView(updated, await eventsFor(env, id), true) });
 });
 
-/* ---------- e-mail (Resend; skipped until RESEND_API_KEY + EMAIL_FROM exist) ---------- */
-async function sendEmail(env, to, subject, html) {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) { console.log("email skipped (no provider configured):", subject); return false; }
-  const res = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: env.EMAIL_FROM, to, subject, html }) });
-  if (!res.ok) console.error("email failed", res.status, (await res.text()).slice(0, 300));
-  return res.ok;
-}
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* ---------- order e-mails (worker/email.js; skipped until RESEND_API_KEY exists) ---------- */
 async function notify(env, order, kind, base) {
   const link = `${base}/order?id=${order.id}&key=${order.access_key}`, items = parse(order.items, []), tr = parse(order.tracking, null);
   const rows = items.map((l) => `<tr><td style="padding:4px 12px 4px 0">${l.qty} × ${esc(l.name)}</td><td style="text-align:right">$${money(l.unit * l.qty)}</td></tr>`).join("");
   const table = `<table style="border-collapse:collapse;font-size:14px">${rows}<tr><td style="padding:8px 12px 0 0">Shipping</td><td style="text-align:right;padding-top:8px">$${money(order.shipping)}</td></tr><tr><td style="padding:4px 12px 0 0"><b>Total</b></td><td style="text-align:right"><b>$${money(order.total)}</b></td></tr></table>`;
-  const wrap = (title, body) => `<div style="font-family:Inter,Segoe UI,sans-serif;color:#111;max-width:560px"><h2 style="margin:0 0 12px">${title}</h2>${body}<p style="margin-top:20px"><a href="${link}">View your order</a></p><p style="color:#777;font-size:12px">BlendWorks · order ${orderNumber(order)}</p></div>`;
+  const wrap = (title, body) => layout(title, `${body}<p style="margin-top:20px"><a href="${link}">View your order</a></p>`, `order ${orderNumber(order)}`);
   if (kind === "paid") return sendEmail(env, order.email, `Order ${orderNumber(order)} confirmed`, wrap("Thanks — your order is confirmed.", `<p>We'll start blending shortly and e-mail you when it ships.</p>${table}`));
   if (kind === "shipped") return sendEmail(env, order.email, `Order ${orderNumber(order)} is on its way`, wrap("Your order has shipped.", `<p>${tr && tr.number ? `${esc(tr.carrier || "Carrier")} tracking ${tr.url ? `<a href="${esc(tr.url)}">${esc(tr.number)}</a>` : esc(tr.number)}.` : "It left our lab today."}</p>${table}`));
   return false;
