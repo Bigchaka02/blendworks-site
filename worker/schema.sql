@@ -66,5 +66,5 @@ CREATE TABLE IF NOT EXISTS order_events (   -- timeline: created, paid, processi
 CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id, at);
 CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, provider TEXT NOT NULL, at INTEGER NOT NULL);   -- idempotency
 
--- 2026-09-14: manual / crypto payment methods (applied)
-ALTER TABLE orders ADD COLUMN payment_info TEXT;   -- JSON: manual instructions {mode:'manual', provider, handle|address, memo, amount, btc, rate, uri, link} or api status {mode:'api', provider, status}
+-- 2026-09-14: manual payment methods (applied)
+ALTER TABLE orders ADD COLUMN payment_info TEXT;   -- JSON: manual instructions {mode:'manual', provider, handle, name, memo, amount, link} or api info {mode:'api', provider, status|wallet}

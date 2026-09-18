@@ -1,5 +1,5 @@
 /* Purchase & delivery: checkout config, order creation with server-side pricing, Stripe Checkout and PayPal redirect
-   flows, payment confirmation (return trip + Stripe webhook), order access for customers, fulfilment for admins,
+   flows, manual pay-in-your-app methods, payment confirmation (return trip + Stripe webhook), order access for customers, fulfilment for admins,
    e-mail notifications (Resend, once configured). Tables: orders, order_events, webhook_events (worker/schema.sql).
 
    Payment methods and what switches them on (secrets = Worker dashboard settings, vars = wrangler.jsonc):
@@ -14,8 +14,6 @@
               CASHAPP_CASHTAG (the customer pays in the app with the order number as the memo)
      zelle    MANUAL with var ZELLE_CONTACT (the e-mail or US phone enrolled with Zelle) + optional ZELLE_NAME (the
               recipient name the customer's bank will show); Zelle has no merchant API, so it is manual only
-     bitcoin  Coinbase Commerce hosted charge (secrets COINBASE_COMMERCE_API_KEY, COINBASE_COMMERCE_WEBHOOK_SECRET,
-              webhook -> /api/webhooks/coinbase) — or MANUAL to var BTC_ADDRESS, quoted at the live spot rate
      test     admin accounts only: completes an order without charging, to rehearse fulfilment
      RESEND_API_KEY, EMAIL_FROM  order e-mails (skipped when absent)
    "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
@@ -118,7 +116,6 @@ function checkAddress(a) {
 }
 
 /* ---------- providers ---------- */
-const validBtcAddress = (a) => /^(bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(a || "");
 const STRIPE_FAMILY = ["stripe", "applepay", "googlepay", "cashapp"];   // all pay on the Stripe-hosted Checkout page (cashapp only in api mode)
 const STRIPE_ONLY = { cashapp: "cashapp" };   // providers that map to one Stripe payment_method_type (wallets don't: they live inside "card")
 function providerModes(env, user) {   // provider -> "api" | "manual" | null (hidden)
@@ -129,12 +126,11 @@ function providerModes(env, user) {   // provider -> "api" | "manual" | null (hi
     venmo: paypal ? "api" : env.VENMO_HANDLE ? "manual" : null,
     cashapp: stripe ? "api" : env.CASHAPP_CASHTAG ? "manual" : null,
     zelle: env.ZELLE_CONTACT ? "manual" : null,
-    bitcoin: env.COINBASE_COMMERCE_API_KEY ? "api" : validBtcAddress(env.BTC_ADDRESS) ? "manual" : null,
     test: user && user.role === "admin" ? "api" : null
   };
 }
 const providers = (env, user) => Object.fromEntries(Object.entries(providerModes(env, user)).map(([k, v]) => [k, !!v]));
-const PROVIDER_OFF = { stripe: "Card payments are not switched on yet.", applepay: "Apple Pay is not switched on yet.", googlepay: "Google Pay is not switched on yet.", paypal: "PayPal is not switched on yet.", venmo: "Venmo is not switched on yet.", cashapp: "Cash App is not switched on yet.", zelle: "Zelle is not switched on yet.", bitcoin: "Bitcoin payments are not switched on yet.", test: "Test payments are for admins only." };
+const PROVIDER_OFF = { stripe: "Card payments are not switched on yet.", applepay: "Apple Pay is not switched on yet.", googlepay: "Google Pay is not switched on yet.", paypal: "PayPal is not switched on yet.", venmo: "Venmo is not switched on yet.", cashapp: "Cash App is not switched on yet.", zelle: "Zelle is not switched on yet.", test: "Test payments are for admins only." };
 async function providerJson(res, label) {
   const text = await res.text();
   let data = null;
@@ -221,38 +217,12 @@ async function paypalCreate(env, order, lines, base, source = "paypal") {   // s
   if (!next) throw new HttpError(502, "PayPal did not return an approval link.");
   return { ref: o.id, url: next.href };
 }
-// Coinbase Commerce: hosted charge (Bitcoin and other crypto), confirmed by polling the charge and by the signed webhook.
-const CC = "https://api.commerce.coinbase.com";
-const ccHeaders = (env) => ({ "X-CC-Api-Key": env.COINBASE_COMMERCE_API_KEY, "X-CC-Version": "2018-03-22", "Content-Type": "application/json" });
-async function coinbaseCreate(env, order, base) {
-  const res = await fetch(`${CC}/charges`, { method: "POST", headers: ccHeaders(env), body: JSON.stringify({
-    name: `BlendWorks order ${orderNumber(order)}`, description: `${parse(order.items, []).length} item(s), shipping to ${parse(order.address, {}).state || "US"}`,
-    pricing_type: "fixed_price", local_price: { amount: money(order.total), currency: "USD" }, metadata: { order_id: order.id },
-    redirect_url: `${base}/order?id=${order.id}&key=${order.access_key}&crypto=return`, cancel_url: `${base}/checkout?cancelled=1` }) });
-  const d = (await providerJson(res, "coinbase create")).data;
-  if (!d || !d.hosted_url) throw new HttpError(502, "Coinbase Commerce did not return a payment page.");
-  return { ref: d.code || d.id, url: d.hosted_url };
-}
-async function coinbaseCharge(env, code) {
-  const res = await fetch(`${CC}/charges/${encodeURIComponent(code)}`, { headers: ccHeaders(env) });
-  return (await providerJson(res, "coinbase get")).data;
-}
-const ccStatus = (charge) => { const t = (charge && charge.timeline) || []; return t.length ? t[t.length - 1].status : "NEW"; };
-const ccPaymentRef = (charge) => { try { return charge.payments[0].transaction_id || charge.code; } catch (e) { return charge && charge.code; } };
 // Manual methods: instructions the customer follows in their own app; an admin confirms receipt.
-async function btcSpotRate() {
-  try { const r = await fetch("https://api.coinbase.com/v2/prices/BTC-USD/spot", { headers: { Accept: "application/json" } }); const d = await r.json(); return Number(d.data.amount) || null; } catch (e) { return null; }
-}
 async function manualInstructions(env, order, provider) {
   const memo = orderNumber(order), amount = money(order.total);
   if (provider === "cashapp") { const tag = "$" + env.CASHAPP_CASHTAG.replace(/[^A-Za-z0-9_-]/g, ""); return { mode: "manual", provider, handle: tag, memo, amount: order.total, link: `https://cash.app/${tag}/${amount}` }; }
   if (provider === "venmo") { const u = env.VENMO_HANDLE.replace(/^@/, ""); return { mode: "manual", provider, handle: `@${u}`, memo, amount: order.total, link: `https://venmo.com/?txn=pay&audience=private&recipients=${encodeURIComponent(u)}&amount=${amount}&note=${encodeURIComponent(memo)}` }; }
   if (provider === "zelle") return { mode: "manual", provider, handle: env.ZELLE_CONTACT.trim(), name: (env.ZELLE_NAME || "BlendWorks").trim(), memo, amount: order.total };   // no deep link: Zelle lives inside each bank's app
-  if (provider === "bitcoin") {
-    const rate = await btcSpotRate(), btc = rate ? (order.total / 100 / rate).toFixed(8) : null;
-    return { mode: "manual", provider, address: env.BTC_ADDRESS, memo, amount: order.total, btc, rate, quotedAt: now(),
-      uri: `bitcoin:${env.BTC_ADDRESS}${btc ? `?amount=${btc}&label=${encodeURIComponent("BlendWorks " + memo)}` : ""}` };
-  }
   throw new HttpError(400, "Unknown payment method.");
 }
 const paypalCaptureId = (o) => { try { return o.purchase_units[0].payments.captures[0].id; } catch (e) { return null; } };
@@ -300,11 +270,6 @@ async function refreshPayment(env, ctx, order, base) {   // pending order: ask t
       let o = await paypalCall(env, "GET", `/v2/checkout/orders/${order.provider_ref}`);
       if (o.status === "APPROVED") o = await paypalCall(env, "POST", `/v2/checkout/orders/${order.provider_ref}/capture`, {}, `capture-${order.id}`);
       if (o.status === "COMPLETED") return markPaid(env, ctx, order, paypalCaptureId(o), order.provider, base);
-    } else if (order.provider === "bitcoin" && env.COINBASE_COMMERCE_API_KEY && order.provider_ref !== "manual") {
-      const c = await coinbaseCharge(env, order.provider_ref), st = ccStatus(c);
-      if (st === "COMPLETED" || st === "RESOLVED") return markPaid(env, ctx, order, ccPaymentRef(c), "coinbase", base);
-      if (st === "EXPIRED" || st === "CANCELED") await cancelPending(env, order, `Crypto charge ${st.toLowerCase()}`);
-      else await setPaymentInfo(env, order, { mode: "api", provider: "bitcoin", status: st });
     }
   } catch (e) { console.error("refreshPayment", order.id, e && e.message); }
   return order;
@@ -362,7 +327,6 @@ export const checkout = guard(async (request, env, ctx, url) => {
     let url_ = `${base}/order?id=${id}&key=${key}`, r = null;
     if (STRIPE_FAMILY.includes(provider) && mode === "api") r = await stripeCreateSession(env, order, lines, base);
     else if (provider === "paypal" || (provider === "venmo" && mode === "api")) r = await paypalCreate(env, order, lines, base, provider);
-    else if (provider === "bitcoin" && mode === "api") r = await coinbaseCreate(env, order, base);
     else if (mode === "manual") {
       const info = await manualInstructions(env, order, provider);
       await env.DB.prepare("UPDATE orders SET provider_ref = 'manual', payment_info = ? WHERE id = ?").bind(JSON.stringify(info), id).run();
@@ -419,26 +383,6 @@ export const stripeWebhook = guard(async (request, env, ctx, url) => {
   if (order) {
     if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && obj.payment_status === "paid") await markPaid(env, ctx, order, obj.payment_intent, "stripe-webhook", siteUrl(env, url));
     else if (event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed") await cancelPending(env, order, event.type);
-  }
-  return json({ received: true });
-});
-
-/* ---------- Coinbase Commerce webhook (X-CC-Webhook-Signature = hex HMAC-SHA256 of the raw body) ---------- */
-export const coinbaseWebhook = guard(async (request, env, ctx, url) => {
-  if (!env.COINBASE_COMMERCE_WEBHOOK_SECRET) throw new HttpError(503, "Webhook secret not configured.");
-  const raw = await request.text(), sig = request.headers.get("X-CC-Webhook-Signature") || "";
-  const expected = await hmacHex(env.COINBASE_COMMERCE_WEBHOOK_SECRET, raw);
-  if (!sig || !timingEqual(enc.encode(sig), enc.encode(expected))) throw new HttpError(400, "Bad signature.");
-  const event = (JSON.parse(raw) || {}).event || {};
-  const seen = await env.DB.prepare("SELECT id FROM webhook_events WHERE id = ?").bind(String(event.id)).first();
-  if (seen) return json({ received: true, duplicate: true });
-  await env.DB.prepare("INSERT INTO webhook_events (id, provider, at) VALUES (?, 'coinbase', ?)").bind(String(event.id), now()).run();
-  const charge = event.data || {}, orderId = charge.metadata && charge.metadata.order_id;
-  const order = orderId ? await loadOrder(env, orderId) : null;
-  if (order) {
-    if (event.type === "charge:confirmed" || event.type === "charge:resolved") await markPaid(env, ctx, order, ccPaymentRef(charge), "coinbase-webhook", siteUrl(env, url));
-    else if (event.type === "charge:failed") await cancelPending(env, order, "Crypto charge failed or expired");
-    else if (event.type === "charge:pending") await setPaymentInfo(env, order, { mode: "api", provider: "bitcoin", status: "PENDING" });
   }
   return json({ received: true });
 });

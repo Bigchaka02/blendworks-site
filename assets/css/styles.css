@@ -570,8 +570,7 @@ textarea.input { min-height: 140px; resize: vertical; }
 .pay-box h2 { font-size: 1.15rem; margin-bottom: .6rem; }
 .pay-box p { margin: 0 0 .75rem; color: var(--muted); }
 .pay-box b { color: var(--text); }
-.pay-box code, .addr-code { font-family: "JetBrains Mono", Consolas, monospace; font-size: .92rem; background: rgba(0,0,0,.35); padding: .15rem .45rem; border-radius: 6px; color: var(--sky-light); }
-.addr-code { display: inline-block; word-break: break-all; user-select: all; }
+.pay-box code { font-family: "JetBrains Mono", Consolas, monospace; font-size: .92rem; background: rgba(0,0,0,.35); padding: .15rem .45rem; border-radius: 6px; color: var(--sky-light); }
 .events { list-style: none; padding: 0; margin: 0; display: grid; gap: .5rem; font-size: .88rem; color: var(--muted); }
 .events b { color: var(--text); }
 .admin-detail .events b { text-transform: capitalize; }

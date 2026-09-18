@@ -42,7 +42,7 @@ export async function run() {
     DB: { prepare: (sql) => ({ bind: (...p) => exec(sql, p) }), batch: async (s) => { for (const x of s) await x.run(); return []; } },
     ASSETS: { fetch: (u) => fetch(new URL(u).pathname) },   // the local preview serves the JSON data files
     SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret",
-    CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit", BTC_ADDRESS: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", COINBASE_COMMERCE_API_KEY: "cc_fake", COINBASE_COMMERCE_WEBHOOK_SECRET: "cc_whsec_fake",
+    CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit",
     ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC"
   };
   const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
@@ -50,7 +50,7 @@ export async function run() {
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED", ccStatus: "PENDING" };
+  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED" };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
     if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) {   // expanded like the Worker asks (payment_intent.latest_charge) so the wallet can be read back
@@ -67,9 +67,6 @@ export async function run() {
     }
     if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "tok" }));
     if (url.endsWith("/v2/checkout/orders")) { const body = JSON.parse(init.body); calls.push({ paypal: body }); const venmo = !!(body.payment_source && body.payment_source.venmo); return new Response(JSON.stringify({ id: venmo ? "PP-VENMO-1" : "PP-ORDER-1", status: venmo ? "PAYER_ACTION_REQUIRED" : "CREATED", links: [{ rel: venmo ? "payer-action" : "approve", href: venmo ? "https://www.sandbox.paypal.com/venmo?token=PP-VENMO-1" : "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
-    if (url === "https://api.commerce.coinbase.com/charges") { calls.push({ coinbase: JSON.parse(init.body) }); return new Response(JSON.stringify({ data: { id: "cc-id-1", code: "CCCODE1", hosted_url: "https://commerce.coinbase.com/charges/CCCODE1" } })); }
-    if (url.startsWith("https://api.commerce.coinbase.com/charges/")) return new Response(JSON.stringify({ data: { code: "CCCODE1", timeline: [{ status: "NEW" }, { status: fake.ccStatus }], payments: fake.ccStatus === "COMPLETED" ? [{ transaction_id: "btc-tx-1" }] : [] } }));
-    if (url.startsWith("https://api.coinbase.com/v2/prices/")) return new Response(JSON.stringify({ data: { amount: "80000.00", currency: "USD" } }));
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1")) return new Response(JSON.stringify({ id: "PP-ORDER-1", status: fake.paypalStatus }));
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1/capture")) { calls.push({ capture: true }); return new Response(JSON.stringify({ id: "PP-ORDER-1", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP-1" }] } }] })); }
     if (url.startsWith("https://api.resend.com/")) { calls.push({ email: JSON.parse(init.body).subject }); return new Response("{}"); }
@@ -150,52 +147,26 @@ export async function run() {
     const vm = await call("POST", "/api/checkout", { email: "f@example.com", address, shippingMethod: "standard", provider: "venmo", items: [{ id: "c-pump", qty: 1 }] });
     out.venmoManual = { status: vm.status, info: JSON.parse(db.orders[5].payment_info) };
     env.PAYPAL_CLIENT_ID = savedPp;
-    // bitcoin via Coinbase Commerce: create, pending, then confirmed; webhook good/bad/duplicate; failed -> cancelled
-    const bc = await call("POST", "/api/checkout", { email: "g@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
-    const orderBc = db.orders[6], ccBody = calls.find((c) => c.coinbase).coinbase;
-    out.bitcoinApi = { status: bc.status, url: bc.data.url, ref: orderBc.provider_ref, charge: { amount: ccBody.local_price, meta: ccBody.metadata.order_id === orderBc.id, redirect: ccBody.redirect_url.includes(orderBc.access_key) } };
-    const bv1 = await call("GET", `/api/orders/${orderBc.id}?key=${orderBc.access_key}`);
-    out.bitcoinPending = { orderStatus: bv1.data.order.status, info: bv1.data.order.paymentInfo };
-    fake.ccStatus = "COMPLETED";
-    const bv2 = await call("GET", `/api/orders/${orderBc.id}?key=${orderBc.access_key}`);
-    out.bitcoinPaid = { orderStatus: bv2.data.order.status, paymentRef: orderBc.payment_ref };
-    const bc2 = await call("POST", "/api/checkout", { email: "h@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
-    const orderBc2 = db.orders[7], ccPayload = JSON.stringify({ event: { id: "cc-evt-1", type: "charge:confirmed", data: { code: "CCCODE1", metadata: { order_id: orderBc2.id }, payments: [{ transaction_id: "btc-tx-2" }] } } });
-    const ccKey = await crypto.subtle.importKey("raw", new TextEncoder().encode("cc_whsec_fake"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const ccSig = [...new Uint8Array(await crypto.subtle.sign("HMAC", ccKey, new TextEncoder().encode(ccPayload)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-    out.coinbaseWebhook = { bad: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": "00", "Content-Type": "application/json" })).status, ok: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": ccSig, "Content-Type": "application/json" })).status, orderStatus: orderBc2.status, paymentRef: orderBc2.payment_ref, dup: (await call("POST", "/api/webhooks/coinbase", ccPayload, { "X-CC-Webhook-Signature": ccSig, "Content-Type": "application/json" })).data };
-    const bc3 = await call("POST", "/api/checkout", { email: "i@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
-    const orderBc3 = db.orders[8], failPayload = JSON.stringify({ event: { id: "cc-evt-2", type: "charge:failed", data: { code: "CCCODE1", metadata: { order_id: orderBc3.id } } } });
-    const failSig = [...new Uint8Array(await crypto.subtle.sign("HMAC", ccKey, new TextEncoder().encode(failPayload)))].map((b) => b.toString(16).padStart(2, "0")).join("");
-    out.coinbaseFailed = { status: (await call("POST", "/api/webhooks/coinbase", failPayload, { "X-CC-Webhook-Signature": failSig, "Content-Type": "application/json" })).status, orderStatus: orderBc3.status };
-    // bitcoin manual when the Commerce key is absent (spot-rate quote)
-    const savedCc = env.COINBASE_COMMERCE_API_KEY; env.COINBASE_COMMERCE_API_KEY = "";
-    out.bitcoinManualMode = (await call("GET", "/api/checkout/config")).data.modes.bitcoin;
-    const bm = await call("POST", "/api/checkout", { email: "j@example.com", address, shippingMethod: "standard", provider: "bitcoin", items: [{ id: "p-night-recovery", qty: 1 }] });
-    const bmInfo = JSON.parse(db.orders[9].payment_info);
-    out.bitcoinManual = { status: bm.status, btc: bmInfo.btc, rate: bmInfo.rate, expectedBtc: (db.orders[9].total / 100 / 80000).toFixed(8), uri: bmInfo.uri, address: bmInfo.address };
-    env.COINBASE_COMMERCE_API_KEY = savedCc;
-    env.BTC_ADDRESS = "not-an-address"; out.badBtcAddressHidden = (await call("GET", "/api/checkout/config")).data.modes.bitcoin === "api" ? "api (key present)" : "hidden"; env.BTC_ADDRESS = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
     // zelle: manual only (no link), recipient name shown, reported works
     const ze = await call("POST", "/api/checkout", { email: "k@example.com", address, shippingMethod: "standard", provider: "zelle", items: [{ id: "p-hydrate", qty: 1 }] });
-    const orderZe = db.orders[10], infoZe = JSON.parse(orderZe.payment_info);
+    const orderZe = db.orders[6], infoZe = JSON.parse(orderZe.payment_info);
     out.zelle = { status: ze.status, url: ze.data.url.replace(ORIGIN, ""), orderStatus: orderZe.status, ref: orderZe.provider_ref, info: infoZe, hasLink: "link" in infoZe, reported: (await call("POST", `/api/orders/${orderZe.id}/reported?key=${orderZe.access_key}`, {})).status };
     // apple pay / google pay: same Stripe session with the wallet tagged; the wallet used comes back from the charge
     fake.stripePaid = false; fake.wallet = null;
     const ap = await call("POST", "/api/checkout", { email: "l@example.com", address, shippingMethod: "standard", provider: "applepay", items: [{ id: "p-ignite", qty: 1 }] });
-    const orderAp = db.orders[11], apParams = calls.filter((c) => c.stripe).pop().stripe;
+    const orderAp = db.orders[7], apParams = calls.filter((c) => c.stripe).pop().stripe;
     out.applePayCreate = { status: ap.status, url: ap.data.url, ref: orderAp.provider_ref, provider: orderAp.provider, walletMeta: apParams["metadata[wallet]"], piWalletMeta: apParams["payment_intent_data[metadata][wallet]"] };
     fake.stripePaid = true; fake.wallet = "apple_pay";
     const apView = await call("GET", `/api/orders/${orderAp.id}?key=${orderAp.access_key}`);
     out.applePayPaid = { orderStatus: apView.data.order.status, paymentRef: orderAp.payment_ref, info: apView.data.order.paymentInfo, expanded: calls.filter((c) => c.stripeGet).pop().stripeGet.includes("expand[]=payment_intent.latest_charge") };
     const gp = await call("POST", "/api/checkout", { email: "m@example.com", address, shippingMethod: "standard", provider: "googlepay", items: [{ id: "p-ignite", qty: 1 }] });
-    out.googlePayCreate = { status: gp.status, provider: db.orders[12].provider, walletMeta: calls.filter((c) => c.stripe).pop().stripe["metadata[wallet]"] };
+    out.googlePayCreate = { status: gp.status, provider: db.orders[8].provider, walletMeta: calls.filter((c) => c.stripe).pop().stripe["metadata[wallet]"] };
     const cardParams = calls.find((c) => c.stripe).stripe;
     out.cardHasNoWalletMeta = !("metadata[wallet]" in cardParams) && !("payment_method_types[0]" in cardParams);
     fake.stripePaid = false; fake.wallet = null;
     // cash app pay through Stripe: session restricted to cashapp, paid-with read back; dashboard type off -> falls back to the dynamic page
     const cp = await call("POST", "/api/checkout", { email: "o@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 1 }] });
-    const orderCp = db.orders[13], cpCall = calls.filter((c) => c.stripe).pop();
+    const orderCp = db.orders[9], cpCall = calls.filter((c) => c.stripe).pop();
     out.cashAppPayCreate = { status: cp.status, url: cp.data.url, ref: orderCp.provider_ref, provider: orderCp.provider, types: cpCall.stripe["payment_method_types[0]"], walletMeta: cpCall.stripe["metadata[wallet]"], idem: cpCall.idem };
     fake.stripePaid = true; fake.pmType = "cashapp";
     const cpView = await call("GET", `/api/orders/${orderCp.id}?key=${orderCp.access_key}`);
@@ -204,7 +175,7 @@ export async function run() {
     const before = calls.filter((c) => c.stripe).length;
     const cp2 = await call("POST", "/api/checkout", { email: "p@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 1 }] });
     const cpCalls = calls.filter((c) => c.stripe).slice(before);
-    out.cashAppPayFallback = { status: cp2.status, orderStatus: db.orders[14].status, attempts: cpCalls.length, first: [cpCalls[0].stripe["payment_method_types[0]"], cpCalls[0].idem], second: cpCalls[1] && [cpCalls[1].stripe["payment_method_types[0]"] || "(dynamic)", cpCalls[1].idem] };
+    out.cashAppPayFallback = { status: cp2.status, orderStatus: db.orders[10].status, attempts: cpCalls.length, first: [cpCalls[0].stripe["payment_method_types[0]"], cpCalls[0].idem], second: cpCalls[1] && [cpCalls[1].stripe["payment_method_types[0]"] || "(dynamic)", cpCalls[1].idem] };
     fake.cashappOff = false;
     // wallets and zelle hidden / refused when nothing is configured
     const savedSk = env.STRIPE_SECRET_KEY, savedZe = env.ZELLE_CONTACT; env.STRIPE_SECRET_KEY = ""; env.ZELLE_CONTACT = "";
