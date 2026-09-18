@@ -42,17 +42,22 @@ export async function run() {
     DB: { prepare: (sql) => ({ bind: (...p) => exec(sql, p) }), batch: async (s) => { for (const x of s) await x.run(); return []; } },
     ASSETS: { fetch: (u) => fetch(new URL(u).pathname) },   // the local preview serves the JSON data files
     SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret",
-    CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit", BTC_ADDRESS: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", COINBASE_COMMERCE_API_KEY: "cc_fake", COINBASE_COMMERCE_WEBHOOK_SECRET: "cc_whsec_fake"
+    CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit", BTC_ADDRESS: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", COINBASE_COMMERCE_API_KEY: "cc_fake", COINBASE_COMMERCE_WEBHOOK_SECRET: "cc_whsec_fake",
+    ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC"
   };
   const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
 
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, paypalStatus: "APPROVED", ccStatus: "PENDING" };
+  const fake = { stripePaid: false, wallet: null, paypalStatus: "APPROVED", ccStatus: "PENDING" };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
-    if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) return new Response(JSON.stringify({ id: url.split("/").pop(), payment_status: fake.stripePaid ? "paid" : "unpaid", status: fake.stripePaid ? "complete" : "open", payment_intent: "pi_fake_1" }));
+    if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) {   // expanded like the Worker asks (payment_intent.latest_charge) so the wallet can be read back
+      calls.push({ stripeGet: url });
+      const pi = fake.wallet ? { id: "pi_fake_1", latest_charge: { payment_method_details: { card: { wallet: { type: fake.wallet } } } } } : "pi_fake_1";
+      return new Response(JSON.stringify({ id: url.split("/").pop().split("?")[0], payment_status: fake.stripePaid ? "paid" : "unpaid", status: fake.stripePaid ? "complete" : "open", payment_intent: pi }));
+    }
     if (url === "https://api.stripe.com/v1/checkout/sessions") { calls.push({ stripe: Object.fromEntries(new URLSearchParams(init.body)) }); return new Response(JSON.stringify({ id: "cs_test_fake", url: "https://checkout.stripe.com/c/pay/cs_test_fake" })); }
     if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "tok" }));
     if (url.endsWith("/v2/checkout/orders")) { const body = JSON.parse(init.body); calls.push({ paypal: body }); const venmo = !!(body.payment_source && body.payment_source.venmo); return new Response(JSON.stringify({ id: venmo ? "PP-VENMO-1" : "PP-ORDER-1", status: venmo ? "PAYER_ACTION_REQUIRED" : "CREATED", links: [{ rel: venmo ? "payer-action" : "approve", href: venmo ? "https://www.sandbox.paypal.com/venmo?token=PP-VENMO-1" : "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
@@ -162,6 +167,31 @@ export async function run() {
     out.bitcoinManual = { status: bm.status, btc: bmInfo.btc, rate: bmInfo.rate, expectedBtc: (db.orders[9].total / 100 / 80000).toFixed(8), uri: bmInfo.uri, address: bmInfo.address };
     env.COINBASE_COMMERCE_API_KEY = savedCc;
     env.BTC_ADDRESS = "not-an-address"; out.badBtcAddressHidden = (await call("GET", "/api/checkout/config")).data.modes.bitcoin === "api" ? "api (key present)" : "hidden"; env.BTC_ADDRESS = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+    // zelle: manual only (no link), recipient name shown, reported works
+    const ze = await call("POST", "/api/checkout", { email: "k@example.com", address, shippingMethod: "standard", provider: "zelle", items: [{ id: "p-hydrate", qty: 1 }] });
+    const orderZe = db.orders[10], infoZe = JSON.parse(orderZe.payment_info);
+    out.zelle = { status: ze.status, url: ze.data.url.replace(ORIGIN, ""), orderStatus: orderZe.status, ref: orderZe.provider_ref, info: infoZe, hasLink: "link" in infoZe, reported: (await call("POST", `/api/orders/${orderZe.id}/reported?key=${orderZe.access_key}`, {})).status };
+    // apple pay / google pay: same Stripe session with the wallet tagged; the wallet used comes back from the charge
+    fake.stripePaid = false; fake.wallet = null;
+    const ap = await call("POST", "/api/checkout", { email: "l@example.com", address, shippingMethod: "standard", provider: "applepay", items: [{ id: "p-ignite", qty: 1 }] });
+    const orderAp = db.orders[11], apParams = calls.filter((c) => c.stripe).pop().stripe;
+    out.applePayCreate = { status: ap.status, url: ap.data.url, ref: orderAp.provider_ref, provider: orderAp.provider, walletMeta: apParams["metadata[wallet]"], piWalletMeta: apParams["payment_intent_data[metadata][wallet]"] };
+    fake.stripePaid = true; fake.wallet = "apple_pay";
+    const apView = await call("GET", `/api/orders/${orderAp.id}?key=${orderAp.access_key}`);
+    out.applePayPaid = { orderStatus: apView.data.order.status, paymentRef: orderAp.payment_ref, info: apView.data.order.paymentInfo, expanded: calls.filter((c) => c.stripeGet).pop().stripeGet.includes("expand[]=payment_intent.latest_charge") };
+    const gp = await call("POST", "/api/checkout", { email: "m@example.com", address, shippingMethod: "standard", provider: "googlepay", items: [{ id: "p-ignite", qty: 1 }] });
+    out.googlePayCreate = { status: gp.status, provider: db.orders[12].provider, walletMeta: calls.filter((c) => c.stripe).pop().stripe["metadata[wallet]"] };
+    const cardParams = calls.find((c) => c.stripe).stripe;
+    out.cardHasNoWalletMeta = !("metadata[wallet]" in cardParams);
+    fake.stripePaid = false; fake.wallet = null;
+    // wallets and zelle hidden / refused when nothing is configured
+    const savedSk = env.STRIPE_SECRET_KEY, savedZe = env.ZELLE_CONTACT; env.STRIPE_SECRET_KEY = ""; env.ZELLE_CONTACT = "";
+    const offModes = (await call("GET", "/api/checkout/config")).data.modes;
+    out.walletsOff = { applepay: offModes.applepay, googlepay: offModes.googlepay, zelle: offModes.zelle, stripe: offModes.stripe };
+    const apOff = await call("POST", "/api/checkout", { email: "n@example.com", address, shippingMethod: "standard", provider: "applepay", items: [{ id: "p-ignite", qty: 1 }] });
+    const zeOff = await call("POST", "/api/checkout", { email: "n@example.com", address, shippingMethod: "standard", provider: "zelle", items: [{ id: "p-ignite", qty: 1 }] });
+    out.walletsRefused = { applepay: `${apOff.status} ${apOff.data.error}`, zelle: `${zeOff.status} ${zeOff.data.error}` };
+    env.STRIPE_SECRET_KEY = savedSk; env.ZELLE_CONTACT = savedZe;
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });

@@ -14,6 +14,10 @@
   const RANK = { pending_payment: 0, paid: 1, processing: 2, shipped: 3, delivered: 4 };
   const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note", instructions: "Payment instructions shown", reported: "You told us the payment was sent" };
+  const PROVIDER = { stripe: "Card (Stripe)", applepay: "Apple Pay", googlepay: "Google Pay", paypal: "PayPal", venmo: "Venmo", cashapp: "Cash App", zelle: "Zelle", bitcoin: "Bitcoin", test: "Test payment" };
+  const WALLET = { apple_pay: "Apple Pay", google_pay: "Google Pay", link: "Link", amex_express_checkout: "Amex Express Checkout" };
+  BW.providerName = (id) => PROVIDER[id] || id;
+  BW.walletName = (w) => (w ? WALLET[w] || w : "");
   BW.orderStatus = (s) => STATUS[s] || { label: s, cls: "" };
   BW.orderBadge = (s) => `<span class="badge ${BW.orderStatus(s).cls}">${BW.orderStatus(s).label}</span>`;
   BW.orderTimeline = (order) => {
@@ -53,7 +57,7 @@
       const info = o.paymentInfo || {}, manual = pending && info.mode === "manual", detected = pending && info.mode === "api" && info.status === "PENDING";
       $("[data-order-eyebrow]").textContent = `Order ${o.number}`;
       $("[data-order-title]").innerHTML = manual ? "One more step — <span class=\"grad-text\">send your payment</span>" : pending ? "Confirming your <span class=\"grad-text\">payment</span>…" : cancelled ? `Order <span class="grad-text">${o.status}</span>` : "Thank you — <span class=\"grad-text\">you're all set</span>";
-      $("[data-order-sub]").textContent = manual ? `Placed ${when(o.createdAt)} · we'll confirm your payment and e-mail you` : detected ? "Payment detected — waiting for network confirmations (usually 10–30 minutes)." : pending ? "This usually takes a few seconds. Keep this page open." : `Placed ${when(o.createdAt)}${o.paidAt ? ` · paid ${when(o.paidAt)}` : ""}`;
+      $("[data-order-sub]").textContent = manual ? `Placed ${when(o.createdAt)} · we'll confirm your payment and e-mail you` : detected ? "Payment detected — waiting for network confirmations (usually 10–30 minutes)." : pending ? "This usually takes a few seconds. Keep this page open." : `Placed ${when(o.createdAt)}${o.paidAt ? ` · paid ${when(o.paidAt)}${info.wallet ? ` with ${BW.walletName(info.wallet)}` : ""}` : ""}`;
       renderPayBox(o, manual);
       $("[data-order-status]").outerHTML = BW.orderBadge(o.status).replace("<span", '<span data-order-status');
       $("[data-order-steps]").innerHTML = cancelled ? "" : BW.orderTimeline(o);
@@ -83,6 +87,8 @@
         ? `<p>Open <b>Cash App</b> and send <b>${amt}</b> to <code>${BW.escapeHtml(i.handle)}</code>. Put <code>${BW.escapeHtml(i.memo)}</code> in the note so we can match it to your order.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.link)}" rel="noopener" target="_blank">Open Cash App</a>`
         : i.provider === "venmo"
         ? `<p>Open <b>Venmo</b> and send <b>${amt}</b> to <code>${BW.escapeHtml(i.handle)}</code>. Put <code>${BW.escapeHtml(i.memo)}</code> in the note so we can match it to your order.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.link)}" rel="noopener" target="_blank">Open Venmo</a>`
+        : i.provider === "zelle"
+        ? `<p>Open your bank's app, choose <b>Send money with Zelle</b>, and send <b>${amt}</b> to <code>${BW.escapeHtml(i.handle)}</code>${i.name ? ` — the recipient should show as <b>${BW.escapeHtml(i.name)}</b>` : ""}. Put <code>${BW.escapeHtml(i.memo)}</code> in the memo so we can match it to your order.</p><p class="muted small">Zelle is built into most US banking apps, has no fee, and usually arrives within minutes.</p>`
         : `<p>Send ${i.btc ? `<b>${i.btc} BTC</b> (${amt} at $${Number(i.rate).toLocaleString()} / BTC, quoted ${when(i.quotedAt)})` : `the equivalent of <b>${amt}</b> in BTC`} to this address:</p><p><code class="addr-code">${BW.escapeHtml(i.address)}</code></p><p class="muted small">Send exactly this amount from your own wallet within about 20 minutes of the quote; network fees are yours. We confirm once the transaction arrives.</p><a class="btn btn-primary" href="${BW.escapeHtml(i.uri)}">Open in wallet</a>`;
       box.innerHTML = `<h2>How to pay</h2>${how}<div class="mt-1">${reported ? `<span class="badge mint">Payment reported ${when(reported)}</span> <span class="muted small">— we'll confirm it and e-mail you.</span>` : `<button class="btn btn-secondary" data-reported>I've sent the payment</button>`}</div>`;
       const btn = $("[data-reported]", box);

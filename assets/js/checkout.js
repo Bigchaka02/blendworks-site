@@ -1,21 +1,28 @@
 /* Checkout page: contact, US shipping address, shipping method and payment method, then POST /api/checkout and
-   follow the provider's redirect (Stripe Checkout, PayPal, or the admin-only test payment). Prices shown here are a
-   preview — the Worker recomputes everything from the catalog and the builder tables (worker/orders.js).
-   Keeps the last address in localStorage (bw_address_v1) and the order being paid in bw_pending_order. */
+   follow the provider's redirect (Stripe Checkout — also for Apple Pay / Google Pay —, PayPal, Venmo, Coinbase, the
+   admin-only test payment) or land on the order page with pay-in-your-app instructions (Cash App, Zelle, manual
+   Venmo / Bitcoin). Prices shown here are a preview — the Worker recomputes everything from the catalog and the
+   builder tables (worker/orders.js). Keeps the last address in localStorage (bw_address_v1) and the order being
+   paid in bw_pending_order. */
 (function () {
   const { $, $$ } = BW;
   const KEY_ADDR = "bw_address_v1", KEY_PENDING = "bw_pending_order";
   const dollars = (cents) => BW.formatPrice(cents / 100);
-  const PROVIDER_COPY = {   // text by mode: api = hosted provider page, manual = pay in your app, we confirm
-    stripe: { title: "Card", api: "Visa, Mastercard, Amex, Apple Pay, Google Pay — secure checkout by Stripe", off: "Card payments open soon" },
+  const PROVIDER_COPY = {   // text by mode: api = hosted provider page, manual = pay in your app, we confirm; off = not switched on
+    stripe: { title: "Card", api: "Visa, Mastercard, Amex, Discover — secure checkout by Stripe", off: "Card payments open soon" },
+    applepay: { title: "Apple Pay", api: "Face ID or Touch ID on the secure Stripe page", unsupported: "Available in Safari on iPhone, iPad and Mac", off: "Apple Pay opens soon" },
+    googlepay: { title: "Google Pay", api: "A card saved to your Google account, on the secure Stripe page", off: "Google Pay opens soon" },
     paypal: { title: "PayPal", api: "Pay with your PayPal balance, bank or card", off: "PayPal opens soon" },
     venmo: { title: "Venmo", api: "Approve in the Venmo app — US only", manual: "Send the total to our Venmo with your order number as the note; we confirm within one business day", off: "Venmo opens soon" },
     cashapp: { title: "Cash App", manual: "Send the total to our $Cashtag with your order number as the note; we confirm within one business day", off: "Cash App opens soon" },
+    zelle: { title: "Zelle", manual: "Send the total from your bank's app with your order number as the memo; we confirm within one business day", off: "Zelle opens soon" },
     bitcoin: { title: "Bitcoin", api: "Pay from any wallet on a Coinbase Commerce page — confirmed on-chain", manual: "We show you the BTC amount and address; confirmed when it arrives", off: "Bitcoin opens soon" },
     test: { title: "Test payment (admin)", api: "Completes the order without charging anything — for checking fulfilment", off: "" }
   };
-  const PROVIDER_ORDER = ["stripe", "paypal", "venmo", "cashapp", "bitcoin"];
-  const SUBMIT = { stripe: "Continue to Stripe", paypal: "Continue to PayPal", "venmo:api": "Continue to Venmo", "venmo:manual": "Place order, then pay by Venmo", "cashapp:manual": "Place order, then pay by Cash App", "bitcoin:api": "Continue to Coinbase", "bitcoin:manual": "Place order, then pay in Bitcoin", test: "Place test order" };
+  const PROVIDER_ORDER = ["stripe", "applepay", "googlepay", "paypal", "venmo", "cashapp", "zelle", "bitcoin"];
+  const SUBMIT = { stripe: "Continue to Stripe", applepay: "Continue to Apple Pay", googlepay: "Continue to Google Pay", paypal: "Continue to PayPal", "venmo:api": "Continue to Venmo", "venmo:manual": "Place order, then pay by Venmo", "cashapp:manual": "Place order, then pay by Cash App", "zelle:manual": "Place order, then pay by Zelle", "bitcoin:api": "Continue to Coinbase", "bitcoin:manual": "Place order, then pay in Bitcoin", test: "Place test order" };
+  // Apple Pay only exists in Safari (window.ApplePaySession); the Stripe page would show no button anywhere else.
+  const usable = (modes, id) => !!modes[id] && !(id === "applepay" && !window.ApplePaySession);
 
   document.addEventListener("bw:ready", async () => {
     const form = $("[data-checkout]");
@@ -43,14 +50,14 @@
 
     // shipping methods + providers
     const subtotal = lines.reduce((s, l) => s + Math.round(l.product.price * 100) * l.qty, 0);
-    const state = { method: cfg.methods[0].id, provider: Object.keys(cfg.providers).find((p) => cfg.providers[p]) || "" };
+    const modes = cfg.modes || {};
+    const state = { method: cfg.methods[0].id, provider: PROVIDER_ORDER.concat(["test"]).find((p) => usable(modes, p)) || "" };
     const methodCost = (m) => (m.freeOver && subtotal >= m.freeOver ? 0 : m.rate);
     $("[data-co-methods]").innerHTML = cfg.methods.map((m) =>
       `<label class="choice${m.id === state.method ? " is-active" : ""}"><input type="radio" name="method" value="${m.id}"${m.id === state.method ? " checked" : ""}><span><b>${m.label}</b><span>${m.eta}${m.freeOver ? ` · free over ${dollars(m.freeOver)}` : ""}</span></span><span class="price num">${methodCost(m) ? dollars(methodCost(m)) : "Free"}</span></label>`).join("");
-    const modes = cfg.modes || {};
     const providerRow = (id) => {
-      const c = PROVIDER_COPY[id], mode = modes[id], on = !!mode;
-      return `<label class="choice${on ? "" : " is-disabled"}${id === state.provider ? " is-active" : ""}"><input type="radio" name="provider" value="${id}"${on ? "" : " disabled"}${id === state.provider ? " checked" : ""}><span><b>${c.title}</b><span>${on ? c[mode] || c.api : c.off}</span></span></label>`;
+      const c = PROVIDER_COPY[id], mode = modes[id], on = usable(modes, id), why = on ? c[mode] || c.api : mode ? c.unsupported : c.off;
+      return `<label class="choice${on ? "" : " is-disabled"}${id === state.provider ? " is-active" : ""}"><input type="radio" name="provider" value="${id}"${on ? "" : " disabled"}${id === state.provider ? " checked" : ""}><span><b>${c.title}</b><span>${why}</span></span></label>`;
     };
     $("[data-co-providers]").innerHTML = PROVIDER_ORDER.concat(cfg.providers.test ? ["test"] : []).map(providerRow).join("");
     if (!state.provider) {
