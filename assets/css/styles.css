@@ -284,8 +284,6 @@ textarea.input { min-height: 140px; resize: vertical; }
 .footer-grid a:hover { color: var(--text); }
 .footer-brand img { height: 30px; width: auto; margin-bottom: 1rem; }
 .footer-brand p { max-width: 36ch; }
-.newsletter { display: flex; gap: .5rem; margin-top: 1rem; }
-.newsletter .input { padding: .7rem 1rem; }
 .footer-bottom { border-top: 1px solid var(--border); padding-top: 1.5rem; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-size: .82rem; color: var(--muted-2); }
 .page-hero { padding: clamp(3rem, 7vw, 6rem) 0 2rem; position: relative; overflow: hidden; }
 .page-hero .mesh span { opacity: .35; }

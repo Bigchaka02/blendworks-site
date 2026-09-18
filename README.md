@@ -58,4 +58,4 @@ Checkout collects contact, a US address, a shipping method (placeholder rates in
 3. Test locally, then `git add -A && git commit && git push origin main` (deploy is automatic).
 
 ## Placeholders / not built
-Live payments need the founder's Stripe / PayPal keys (until then only the admin test payment works); product & builder data and prices; shipping rates and sales tax; contact form and newsletter (simulated); legal copy; email verification / password reset; subscriptions. See `../notes/open-questions-for-founder.md`.
+Live payments need the founder's Stripe / PayPal keys (until then only the admin test payment works); product & builder data and prices; shipping rates and sales tax; contact form (simulated); legal copy; email verification / password reset; subscriptions. See `../notes/open-questions-for-founder.md`.

@@ -151,7 +151,6 @@
       <div class="footer-grid">
         <div class="footer-brand">${LOGO}
           <p>Custom supplement capsules and powders, made to order. Every milligram on the label — nothing hidden.</p>
-          <form class="newsletter" data-newsletter><input class="input" type="email" placeholder="Email for launch updates" aria-label="Email" required><button class="btn btn-secondary btn-sm" type="submit">Join</button></form>
         </div>
         <div><h4>Shop</h4><ul><li><a href="/shop?type=capsule">Capsule blends</a></li><li><a href="/shop?type=powder">Powder blends</a></li><li><a href="/shop">All products</a></li><li><a href="/build">Build your own</a></li></ul></div>
         <div><h4>Company</h4><ul><li><a href="/about">About</a></li><li><a href="/mission">Mission &amp; goals</a></li><li><a href="/contact">Contact</a></li><li><a href="/contact#faq">FAQ</a></li></ul></div>
@@ -160,12 +159,6 @@
       <div class="footer-bottom"><span>&copy; ${new Date().getFullYear()} BlendWorks. All rights reserved.</span><span>Made to order &middot; Shipping details announced at launch</span></div>
       <p class="disclaimer">These statements have not been evaluated by the Food and Drug Administration. These products are not intended to diagnose, treat, cure, or prevent any disease. For adults 18+. Consult a physician before use if you are pregnant, nursing, taking medication, or have a medical condition.</p>
     </div>`;
-    const nl = $("[data-newsletter]", host);
-    nl.addEventListener("submit", (e) => {
-      e.preventDefault();
-      nl.reset();
-      BW.toast("Thanks! Email updates aren't switched on yet, so nothing was saved — check back soon.");   // TODO(newsletter): connect a list provider (Q16)
-    });
   }
 
   /* ---------- cart UI: badge, quantity control, line items, drawer ---------- */
