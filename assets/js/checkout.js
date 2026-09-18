@@ -1,7 +1,7 @@
 /* Checkout page: contact, US shipping address, shipping method and payment method, then POST /api/checkout and
-   follow the provider's redirect (Stripe Checkout — also for Apple Pay / Google Pay —, PayPal, Venmo, Coinbase, the
-   admin-only test payment) or land on the order page with pay-in-your-app instructions (Cash App, Zelle, manual
-   Venmo / Bitcoin). Prices shown here are a preview — the Worker recomputes everything from the catalog and the
+   follow the provider's redirect (Stripe Checkout — also for Apple Pay / Google Pay / Cash App Pay —, PayPal, Venmo,
+   Coinbase, the admin-only test payment) or land on the order page with pay-in-your-app instructions (Zelle, manual
+   Cash App / Venmo / Bitcoin). Prices shown here are a preview — the Worker recomputes everything from the catalog and the
    builder tables (worker/orders.js). Keeps the last address in localStorage (bw_address_v1) and the order being
    paid in bw_pending_order. */
 (function () {
@@ -14,13 +14,13 @@
     googlepay: { title: "Google Pay", api: "A card saved to your Google account, on the secure Stripe page", off: "Google Pay opens soon" },
     paypal: { title: "PayPal", api: "Pay with your PayPal balance, bank or card", off: "PayPal opens soon" },
     venmo: { title: "Venmo", api: "Approve in the Venmo app — US only", manual: "Send the total to our Venmo with your order number as the note; we confirm within one business day", off: "Venmo opens soon" },
-    cashapp: { title: "Cash App", manual: "Send the total to our $Cashtag with your order number as the note; we confirm within one business day", off: "Cash App opens soon" },
+    cashapp: { title: "Cash App", api: "Cash App Pay — approve in the app, paid from your balance or linked card", manual: "Send the total to our $Cashtag with your order number as the note; we confirm within one business day", off: "Cash App opens soon" },
     zelle: { title: "Zelle", manual: "Send the total from your bank's app with your order number as the memo; we confirm within one business day", off: "Zelle opens soon" },
     bitcoin: { title: "Bitcoin", api: "Pay from any wallet on a Coinbase Commerce page — confirmed on-chain", manual: "We show you the BTC amount and address; confirmed when it arrives", off: "Bitcoin opens soon" },
     test: { title: "Test payment (admin)", api: "Completes the order without charging anything — for checking fulfilment", off: "" }
   };
-  const PROVIDER_ORDER = ["stripe", "applepay", "googlepay", "paypal", "venmo", "cashapp", "zelle", "bitcoin"];
-  const SUBMIT = { stripe: "Continue to Stripe", applepay: "Continue to Apple Pay", googlepay: "Continue to Google Pay", paypal: "Continue to PayPal", "venmo:api": "Continue to Venmo", "venmo:manual": "Place order, then pay by Venmo", "cashapp:manual": "Place order, then pay by Cash App", "zelle:manual": "Place order, then pay by Zelle", "bitcoin:api": "Continue to Coinbase", "bitcoin:manual": "Place order, then pay in Bitcoin", test: "Place test order" };
+  const PROVIDER_ORDER = ["stripe", "applepay", "googlepay", "cashapp", "paypal", "venmo", "zelle", "bitcoin"];   // Stripe group, PayPal group, Zelle, crypto
+  const SUBMIT = { stripe: "Continue to Stripe", applepay: "Continue to Apple Pay", googlepay: "Continue to Google Pay", paypal: "Continue to PayPal", "venmo:api": "Continue to Venmo", "venmo:manual": "Place order, then pay by Venmo", "cashapp:api": "Continue to Cash App", "cashapp:manual": "Place order, then pay by Cash App", "zelle:manual": "Place order, then pay by Zelle", "bitcoin:api": "Continue to Coinbase", "bitcoin:manual": "Place order, then pay in Bitcoin", test: "Place test order" };
   // Apple Pay only exists in Safari (window.ApplePaySession); the Stripe page would show no button anywhere else.
   const usable = (modes, id) => !!modes[id] && !(id === "applepay" && !window.ApplePaySession);
 

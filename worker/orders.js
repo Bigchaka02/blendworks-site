@@ -9,7 +9,9 @@
               actually used is read back from the charge and kept in payment_info.wallet
      paypal   PayPal (Orders v2, approve + capture)   secrets PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV (sandbox|live)
      venmo    via the PayPal keys (payment_source.venmo, US buyers) — or MANUAL with var VENMO_HANDLE
-     cashapp  MANUAL with var CASHAPP_CASHTAG (the customer pays in the app with the order number as the memo)
+     cashapp  via the Stripe key as Cash App Pay (the session is restricted to payment_method_types[]=cashapp; if that type is
+              still off in the Stripe dashboard the create call fails and we fall back to the dynamic page) — or MANUAL with var
+              CASHAPP_CASHTAG (the customer pays in the app with the order number as the memo)
      zelle    MANUAL with var ZELLE_CONTACT (the e-mail or US phone enrolled with Zelle) + optional ZELLE_NAME (the
               recipient name the customer's bank will show); Zelle has no merchant API, so it is manual only
      bitcoin  Coinbase Commerce hosted charge (secrets COINBASE_COMMERCE_API_KEY, COINBASE_COMMERCE_WEBHOOK_SECRET,
@@ -117,14 +119,15 @@ function checkAddress(a) {
 
 /* ---------- providers ---------- */
 const validBtcAddress = (a) => /^(bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(a || "");
-const STRIPE_FAMILY = ["stripe", "applepay", "googlepay"];   // all three pay on the Stripe-hosted Checkout page
+const STRIPE_FAMILY = ["stripe", "applepay", "googlepay", "cashapp"];   // all pay on the Stripe-hosted Checkout page (cashapp only in api mode)
+const STRIPE_ONLY = { cashapp: "cashapp" };   // providers that map to one Stripe payment_method_type (wallets don't: they live inside "card")
 function providerModes(env, user) {   // provider -> "api" | "manual" | null (hidden)
   const stripe = env.STRIPE_SECRET_KEY ? "api" : null, paypal = !!(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET);
   return {
     stripe, applepay: stripe, googlepay: stripe,
     paypal: paypal ? "api" : null,
     venmo: paypal ? "api" : env.VENMO_HANDLE ? "manual" : null,
-    cashapp: env.CASHAPP_CASHTAG ? "manual" : null,
+    cashapp: stripe ? "api" : env.CASHAPP_CASHTAG ? "manual" : null,
     zelle: env.ZELLE_CONTACT ? "manual" : null,
     bitcoin: env.COINBASE_COMMERCE_API_KEY ? "api" : validBtcAddress(env.BTC_ADDRESS) ? "manual" : null,
     test: user && user.role === "admin" ? "api" : null
@@ -145,13 +148,15 @@ function stripeForm(params) {
   Object.entries(params).forEach(([k, v]) => f.set(k, String(v)));
   return f;
 }
-async function stripeCreateSession(env, order, lines, base) {
+async function stripeCreateSession(env, order, lines, base, restrict = true) {
+  const only = restrict && STRIPE_ONLY[order.provider];
   const params = {
     mode: "payment", success_url: `${base}/order?id=${order.id}&key=${order.access_key}&session_id={CHECKOUT_SESSION_ID}`, cancel_url: `${base}/checkout?cancelled=1`,
     customer_email: order.email, client_reference_id: order.id, "metadata[order_id]": order.id,
     "payment_intent_data[metadata][order_id]": order.id, "payment_intent_data[description]": `BlendWorks order ${orderNumber(order)}`
   };
   if (order.provider !== "stripe") { params["metadata[wallet]"] = order.provider; params["payment_intent_data[metadata][wallet]"] = order.provider; }   // the wallet the customer picked
+  if (only) params["payment_method_types[0]"] = only;   // e.g. Cash App: the hosted page shows just that method
   let i = 0;
   const add = (name, description, unit, qty) => {
     params[`line_items[${i}][quantity]`] = qty;
@@ -164,16 +169,22 @@ async function stripeCreateSession(env, order, lines, base) {
   lines.forEach((l) => add(l.name, l.description, l.unit, l.qty));
   if (order.shipping > 0) add(`Shipping — ${SHIPPING_METHODS[order.shipping_method].label}`, SHIPPING_METHODS[order.shipping_method].eta, order.shipping, 1);
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", { method: "POST", body: stripeForm(params),
-    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded", "Idempotency-Key": `order-${order.id}` } });
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded", "Idempotency-Key": `order-${order.id}${only ? `-${only}` : ""}` } });
+  if (!res.ok && only) {   // that payment method isn't switched on in the Stripe dashboard yet: fall back to the dynamic page rather than fail the order
+    console.error(`stripe create restricted to ${only}`, res.status, (await res.text()).slice(0, 300));
+    return stripeCreateSession(env, order, lines, base, false);
+  }
   const s = await providerJson(res, "stripe create");
   return { ref: s.id, url: s.url };
 }
-async function stripeSession(env, id) {   // expands the charge so the wallet used (apple_pay / google_pay / link) can be recorded
+async function stripeSession(env, id) {   // expands the charge so the method actually used (apple_pay / google_pay / link / cashapp …) can be recorded
   const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(id)}?expand[]=payment_intent.latest_charge`, { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } });
   return providerJson(res, "stripe get");
 }
 const stripeIntentId = (s) => (s.payment_intent && typeof s.payment_intent === "object" ? s.payment_intent.id : s.payment_intent) || null;
-const stripeWallet = (s) => { try { return s.payment_intent.latest_charge.payment_method_details.card.wallet.type || null; } catch (e) { return null; } };
+const stripePaidWith = (s) => {   // "apple_pay" | "google_pay" | "link" for card wallets, otherwise the Stripe payment method type ("cashapp", "affirm", …)
+  try { const d = s.payment_intent.latest_charge.payment_method_details; return (d.type === "card" ? d.card.wallet && d.card.wallet.type : d.type) || null; } catch (e) { return null; }
+};
 async function stripeVerify(env, request, raw) {   // Stripe-Signature: t=…,v1=…[,v1=…]
   const header = request.headers.get("Stripe-Signature") || "", parts = { t: "", v1: [] };
   header.split(",").forEach((p) => { const [k, v] = p.trim().split("="); if (k === "t") parts.t = v; else if (k === "v1") parts.v1.push(v); });
@@ -277,10 +288,10 @@ async function cancelPending(env, order, detail) {
 async function refreshPayment(env, ctx, order, base) {   // pending order: ask the provider whether it was paid
   if (order.status !== "pending_payment" || !order.provider_ref) return order;
   try {
-    if (STRIPE_FAMILY.includes(order.provider) && env.STRIPE_SECRET_KEY) {
+    if (STRIPE_FAMILY.includes(order.provider) && env.STRIPE_SECRET_KEY && order.provider_ref !== "manual") {
       const s = await stripeSession(env, order.provider_ref);
       if (s.payment_status === "paid") {
-        const wallet = stripeWallet(s);
+        const wallet = stripePaidWith(s);
         if (wallet) await setPaymentInfo(env, order, { mode: "api", provider: order.provider, wallet });
         return markPaid(env, ctx, order, stripeIntentId(s), "stripe", base);
       }
@@ -349,7 +360,7 @@ export const checkout = guard(async (request, env, ctx, url) => {
   await addEvent(env, id, user ? "customer" : "guest", "created", `${lines.length} line(s), ${provider}`);
   try {
     let url_ = `${base}/order?id=${id}&key=${key}`, r = null;
-    if (STRIPE_FAMILY.includes(provider)) r = await stripeCreateSession(env, order, lines, base);
+    if (STRIPE_FAMILY.includes(provider) && mode === "api") r = await stripeCreateSession(env, order, lines, base);
     else if (provider === "paypal" || (provider === "venmo" && mode === "api")) r = await paypalCreate(env, order, lines, base, provider);
     else if (provider === "bitcoin" && mode === "api") r = await coinbaseCreate(env, order, base);
     else if (mode === "manual") {

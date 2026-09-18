@@ -15,7 +15,7 @@
   const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note", instructions: "Payment instructions shown", reported: "You told us the payment was sent" };
   const PROVIDER = { stripe: "Card (Stripe)", applepay: "Apple Pay", googlepay: "Google Pay", paypal: "PayPal", venmo: "Venmo", cashapp: "Cash App", zelle: "Zelle", bitcoin: "Bitcoin", test: "Test payment" };
-  const WALLET = { apple_pay: "Apple Pay", google_pay: "Google Pay", link: "Link", amex_express_checkout: "Amex Express Checkout" };
+  const WALLET = { apple_pay: "Apple Pay", google_pay: "Google Pay", link: "Link", cashapp: "Cash App Pay", affirm: "Affirm", klarna: "Klarna", afterpay_clearpay: "Afterpay", amazon_pay: "Amazon Pay", us_bank_account: "bank transfer (ACH)", amex_express_checkout: "Amex Express Checkout" };
   BW.providerName = (id) => PROVIDER[id] || id;
   BW.walletName = (w) => (w ? WALLET[w] || w : "");
   BW.orderStatus = (s) => STATUS[s] || { label: s, cls: "" };

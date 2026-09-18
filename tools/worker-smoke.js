@@ -50,15 +50,21 @@ export async function run() {
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, wallet: null, paypalStatus: "APPROVED", ccStatus: "PENDING" };
+  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED", ccStatus: "PENDING" };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
     if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) {   // expanded like the Worker asks (payment_intent.latest_charge) so the wallet can be read back
       calls.push({ stripeGet: url });
-      const pi = fake.wallet ? { id: "pi_fake_1", latest_charge: { payment_method_details: { card: { wallet: { type: fake.wallet } } } } } : "pi_fake_1";
+      const pmd = fake.wallet ? { type: "card", card: { wallet: { type: fake.wallet } } } : fake.pmType ? { type: fake.pmType } : null;
+      const pi = pmd ? { id: "pi_fake_1", latest_charge: { payment_method_details: pmd } } : "pi_fake_1";
       return new Response(JSON.stringify({ id: url.split("/").pop().split("?")[0], payment_status: fake.stripePaid ? "paid" : "unpaid", status: fake.stripePaid ? "complete" : "open", payment_intent: pi }));
     }
-    if (url === "https://api.stripe.com/v1/checkout/sessions") { calls.push({ stripe: Object.fromEntries(new URLSearchParams(init.body)) }); return new Response(JSON.stringify({ id: "cs_test_fake", url: "https://checkout.stripe.com/c/pay/cs_test_fake" })); }
+    if (url === "https://api.stripe.com/v1/checkout/sessions") {
+      const p = Object.fromEntries(new URLSearchParams(init.body));
+      calls.push({ stripe: p, idem: init.headers["Idempotency-Key"] });
+      if (fake.cashappOff && p["payment_method_types[0]"] === "cashapp") return new Response(JSON.stringify({ error: { message: "The payment method type provided: cashapp is invalid. Please ensure the provided type is activated in your dashboard." } }), { status: 400 });
+      return new Response(JSON.stringify({ id: "cs_test_fake", url: "https://checkout.stripe.com/c/pay/cs_test_fake" }));
+    }
     if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "tok" }));
     if (url.endsWith("/v2/checkout/orders")) { const body = JSON.parse(init.body); calls.push({ paypal: body }); const venmo = !!(body.payment_source && body.payment_source.venmo); return new Response(JSON.stringify({ id: venmo ? "PP-VENMO-1" : "PP-ORDER-1", status: venmo ? "PAYER_ACTION_REQUIRED" : "CREATED", links: [{ rel: venmo ? "payer-action" : "approve", href: venmo ? "https://www.sandbox.paypal.com/venmo?token=PP-VENMO-1" : "https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1" }] })); }
     if (url === "https://api.commerce.coinbase.com/charges") { calls.push({ coinbase: JSON.parse(init.body) }); return new Response(JSON.stringify({ data: { id: "cc-id-1", code: "CCCODE1", hosted_url: "https://commerce.coinbase.com/charges/CCCODE1" } })); }
@@ -121,10 +127,13 @@ export async function run() {
     out.paypalCreate = { status: co3.status, url: co3.data.url, ref: order3.provider_ref, amount: pp.purchase_units[0].amount, items: pp.purchase_units[0].items.map((i) => `${i.name} ${i.unit_amount.value}`), returnUrl: pp.application_context.return_url.includes(order3.access_key) };
     const v3 = await call("GET", `/api/orders/${order3.id}?key=${order3.access_key}`);
     out.paypalReturn = { orderStatus: v3.data.order.status, captured: calls.some((c) => c.capture), paymentRef: order3.payment_ref };
-    // manual methods: cash app (order stays pending, instructions + reported)
+    // manual methods: cash app by $cashtag when there is no Stripe key (order stays pending, instructions + reported)
     const cfg2 = await call("GET", "/api/checkout/config");
     out.modes = cfg2.data.modes;
+    const savedSkCa = env.STRIPE_SECRET_KEY; env.STRIPE_SECRET_KEY = "";
+    out.cashappManualMode = (await call("GET", "/api/checkout/config")).data.modes.cashapp;
     const ca = await call("POST", "/api/checkout", { email: "d@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 2 }] });
+    env.STRIPE_SECRET_KEY = savedSkCa;
     const orderCa = db.orders[3], infoCa = JSON.parse(orderCa.payment_info);
     out.cashapp = { status: ca.status, url: ca.data.url.replace(ORIGIN, ""), orderStatus: orderCa.status, ref: orderCa.provider_ref, info: infoCa, events: db.events.filter((e) => e.order_id === orderCa.id).map((e) => e.type) };
     const rep1 = await call("POST", `/api/orders/${orderCa.id}/reported?key=${orderCa.access_key}`, {});
@@ -182,8 +191,21 @@ export async function run() {
     const gp = await call("POST", "/api/checkout", { email: "m@example.com", address, shippingMethod: "standard", provider: "googlepay", items: [{ id: "p-ignite", qty: 1 }] });
     out.googlePayCreate = { status: gp.status, provider: db.orders[12].provider, walletMeta: calls.filter((c) => c.stripe).pop().stripe["metadata[wallet]"] };
     const cardParams = calls.find((c) => c.stripe).stripe;
-    out.cardHasNoWalletMeta = !("metadata[wallet]" in cardParams);
+    out.cardHasNoWalletMeta = !("metadata[wallet]" in cardParams) && !("payment_method_types[0]" in cardParams);
     fake.stripePaid = false; fake.wallet = null;
+    // cash app pay through Stripe: session restricted to cashapp, paid-with read back; dashboard type off -> falls back to the dynamic page
+    const cp = await call("POST", "/api/checkout", { email: "o@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 1 }] });
+    const orderCp = db.orders[13], cpCall = calls.filter((c) => c.stripe).pop();
+    out.cashAppPayCreate = { status: cp.status, url: cp.data.url, ref: orderCp.provider_ref, provider: orderCp.provider, types: cpCall.stripe["payment_method_types[0]"], walletMeta: cpCall.stripe["metadata[wallet]"], idem: cpCall.idem };
+    fake.stripePaid = true; fake.pmType = "cashapp";
+    const cpView = await call("GET", `/api/orders/${orderCp.id}?key=${orderCp.access_key}`);
+    out.cashAppPayPaid = { orderStatus: cpView.data.order.status, info: cpView.data.order.paymentInfo, paymentRef: orderCp.payment_ref };
+    fake.stripePaid = false; fake.pmType = null; fake.cashappOff = true;
+    const before = calls.filter((c) => c.stripe).length;
+    const cp2 = await call("POST", "/api/checkout", { email: "p@example.com", address, shippingMethod: "standard", provider: "cashapp", items: [{ id: "p-hydrate", qty: 1 }] });
+    const cpCalls = calls.filter((c) => c.stripe).slice(before);
+    out.cashAppPayFallback = { status: cp2.status, orderStatus: db.orders[14].status, attempts: cpCalls.length, first: [cpCalls[0].stripe["payment_method_types[0]"], cpCalls[0].idem], second: cpCalls[1] && [cpCalls[1].stripe["payment_method_types[0]"] || "(dynamic)", cpCalls[1].idem] };
+    fake.cashappOff = false;
     // wallets and zelle hidden / refused when nothing is configured
     const savedSk = env.STRIPE_SECRET_KEY, savedZe = env.ZELLE_CONTACT; env.STRIPE_SECRET_KEY = ""; env.ZELLE_CONTACT = "";
     const offModes = (await call("GET", "/api/checkout/config")).data.modes;
