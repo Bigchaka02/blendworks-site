@@ -83,3 +83,19 @@ CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens (user_id, kind);
 -- 2026-09-26: Stripe Tax (applied)
 ALTER TABLE orders ADD COLUMN tax_calculation TEXT;    -- Stripe Tax calculation id (valid 90 days, made at checkout)
 ALTER TABLE orders ADD COLUMN tax_transaction TEXT;    -- Stripe Tax transaction id, created once the order is paid (filing record)
+
+-- 2026-09-26: returns and refunds (applied)
+ALTER TABLE orders ADD COLUMN refunded_cents INTEGER NOT NULL DEFAULT 0;   -- running total refunded; status becomes 'refunded' when it reaches the order total
+CREATE TABLE IF NOT EXISTS returns (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,                -- requested | approved | received | refunded | declined | cancelled
+  items TEXT NOT NULL,                 -- JSON [{i (line index), qty, name, unit}]
+  reason TEXT NOT NULL,                -- changed_mind | ordered_by_mistake | arrived_damaged | wrong_item | other
+  customer_note TEXT,
+  admin_note TEXT,                     -- shown to the customer only when a return is declined
+  amount INTEGER NOT NULL DEFAULT 0,   -- cents: estimated when requested, final when refunded
+  refund_ref TEXT,                     -- Stripe refund / PayPal refund id; null when repaid by hand
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, refunded_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS returns_order ON returns (order_id);

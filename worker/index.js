@@ -11,6 +11,8 @@
      POST   /api/checkout                                             (starts payment; returns the redirect URL)
      GET    /api/orders             GET  /api/orders/:id?key=…      (owner, admin, or the access key from the order link)
      POST   /api/orders/:id/reported?key=…                            ("I've sent the payment" on manual methods)
+     POST   /api/orders/:id/return?key=…                              (start a return: unopened items, 7 days)
+     POST   /api/admin/returns/:id                                    (approve | decline | received | refund | cancel)
      POST   /api/webhooks/stripe
      GET    /api/admin/orders?status=&q=   GET/POST /api/admin/orders/:id      (role = admin)
    Everything else under /api is 404 JSON; other paths fall through to the static assets (404.html for unknown). */
@@ -68,6 +70,8 @@ async function route(request, env, ctx, url) {
   if ((x = id(/^\/api\/blends\/([A-Za-z0-9-]{1,64})$/)) && method === "DELETE") return auth.deleteBlend(request, env, x);
   if ((x = id(/^\/api\/orders\/([A-Za-z0-9-]{1,64})$/)) && method === "GET") return orders.getOrder(request, env, ctx, x, url);
   if ((x = id(/^\/api\/orders\/([A-Za-z0-9-]{1,64})\/reported$/)) && method === "POST") return orders.reportPaid(request, env, ctx, x, url);
+  if ((x = id(/^\/api\/orders\/([A-Za-z0-9-]{1,64})\/return$/)) && method === "POST") return orders.requestReturn(request, env, ctx, x, url);
+  if ((x = id(/^\/api\/admin\/returns\/([A-Za-z0-9-]{1,64})$/)) && method === "POST") return orders.adminReturn(request, env, ctx, x, url);
   if ((x = id(/^\/api\/admin\/orders\/([A-Za-z0-9-]{1,64})$/))) {
     if (method === "GET") return orders.adminOrder(request, env, ctx, x);
     if (method === "POST") return orders.adminUpdateOrder(request, env, ctx, x, url);

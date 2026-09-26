@@ -514,6 +514,8 @@ textarea.input { min-height: 140px; resize: vertical; }
 .pw-field .input { padding-right: 4.6rem; }
 .pw-field .toggle { position: absolute; right: .6rem; bottom: .6rem; font-size: .8rem; font-weight: 600; color: var(--sky-light); padding: .3rem .5rem; border-radius: 6px; }
 .pw-field .toggle:hover { background: var(--surface-2); }
+.field > .label { display: block; font-size: .85rem; font-weight: 600; color: var(--muted); margin-bottom: .4rem; }
+.qty-in { width: 4.2rem; padding: .2rem .4rem; display: inline-block; margin-right: .35rem; }
 .check { display: flex; gap: .6rem; align-items: flex-start; font-size: .9rem; color: var(--muted); }
 .check input { margin-top: .3rem; accent-color: var(--sky); }
 .field.end { justify-content: flex-end; }

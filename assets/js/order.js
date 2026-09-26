@@ -1,4 +1,6 @@
-/* Order page (/order?id=…&key=…): confirmation after payment and the customer's tracking view.
+/* Order page (/order?id=…&key=…): confirmation after payment, the customer's tracking view, and returns —
+   unopened items can be sent back within 7 days of delivery (D39); the box below the timeline starts one and then
+   shows where it has got to.
    The Worker re-checks the payment provider on each load while an order is still pending, so this page just polls
    a few times after the return from Stripe / PayPal. Shared status labels live in BW.orderStatus (used by the account
    and admin pages too). */
@@ -13,7 +15,17 @@
   const STEPS = [["created", "Placed"], ["paid", "Paid"], ["processing", "Blending"], ["shipped", "Shipped"], ["delivered", "Delivered"]];
   const RANK = { pending_payment: 0, paid: 1, processing: 2, shipped: 3, delivered: 4 };
   const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note", instructions: "Payment instructions shown", reported: "You told us the payment was sent" };
+  const EVENT_TEXT = { created: "Order placed", paid: "Payment received", processing: "We started blending your order", shipped: "Shipped", delivered: "Delivered", cancelled: "Order cancelled", refunded: "Refunded", tracking: "Tracking added", note: "Note", instructions: "Payment instructions shown", reported: "You told us the payment was sent",
+    return_requested: "You asked to return something", return_approved: "Return approved", return_declined: "Return declined", return_received: "We received your return", return_refunded: "Return refunded", return_cancelled: "Return cancelled" };
+  const RETURN_STATUS = {
+    requested: { label: "Return requested", cls: "amber", text: "We'll e-mail you the go-ahead and the return address, usually within one business day." },
+    approved: { label: "Return approved", cls: "mint", text: "Send the items back unopened with the order number on the parcel. We refund once they're here and the seals are intact." },
+    received: { label: "Return received", cls: "mint", text: "Your parcel is here — we're checking it over and your refund follows shortly." },
+    refunded: { label: "Refunded", cls: "success", text: "Refunded to your original payment method. Banks usually show it within 5–10 business days." },
+    declined: { label: "Return declined", cls: "danger", text: "" },
+    cancelled: { label: "Return cancelled", cls: "", text: "" }
+  };
+  const REASONS = [["changed_mind", "Changed my mind"], ["ordered_by_mistake", "Ordered by mistake"], ["arrived_damaged", "Arrived damaged"], ["wrong_item", "Wrong item sent"], ["other", "Something else"]];
   const PROVIDER = { stripe: "Card (Stripe)", applepay: "Apple Pay", googlepay: "Google Pay", paypal: "PayPal", venmo: "Venmo", cashapp: "Cash App", zelle: "Zelle", test: "Test payment" };
   const WALLET = { apple_pay: "Apple Pay", google_pay: "Google Pay", link: "Link", cashapp: "Cash App Pay", affirm: "Affirm", klarna: "Klarna", afterpay_clearpay: "Afterpay", amazon_pay: "Amazon Pay", us_bank_account: "bank transfer (ACH)", amex_express_checkout: "Amex Express Checkout" };
   BW.providerName = (id) => PROVIDER[id] || id;
@@ -76,7 +88,61 @@
       $("[data-order-total]").textContent = dollars(o.amounts.total);
       $("[data-order-address]").innerHTML = BW.orderAddress(o.address);
       $("[data-order-email]").textContent = `Updates go to ${o.email}.`;
+      renderReturns(o);
       $("[data-order-events]").innerHTML = o.events.map((e) => `<li><b>${EVENT_TEXT[e.type] || e.type}</b>${e.detail && e.type !== "created" && e.type !== "paid" ? ` — ${BW.escapeHtml(e.detail)}` : ""}<br><span>${when(e.at)}</span></li>`).join("") || "<li>No updates yet.</li>";
+    }
+    // Returns live under the order: the state of one in progress, or the form to start one while the window is open.
+    function renderReturns(o) {
+      const host = $("[data-order-returns]"), open = (o.returns || []).filter((r) => r.status !== "cancelled");
+      const latest = open[open.length - 1], win = o.returnWindow || {};
+      const live = latest && ["requested", "approved", "received"].includes(latest.status);
+      if (!latest && !win.open) { host.hidden = true; return; }
+      host.hidden = false;
+      if (latest) {
+        const st = RETURN_STATUS[latest.status] || { label: latest.status, cls: "", text: "" };
+        const lines = latest.items.map((i) => `${i.qty} × ${BW.escapeHtml(i.name)}`).join(", ");
+        host.innerHTML = `<h2>Return</h2><p><span class="badge ${st.cls}">${st.label}</span> <span class="muted small">asked ${when(latest.createdAt)}</span></p>
+          <p>${lines} — ${BW.escapeHtml(latest.reasonText || "")}</p>
+          <p class="muted">${st.text}${latest.status === "declined" && latest.adminNote ? " " + BW.escapeHtml(latest.adminNote) : ""}</p>
+          ${latest.status === "refunded" ? `<p><b>${dollars(latest.amount)} refunded</b>${latest.refundedAt ? ` on ${when(latest.refundedAt)}` : ""}.</p>` : `<p class="muted small">We expect to refund about ${dollars(latest.amount)} (the items and their sales tax; original shipping isn't refunded unless we got the order wrong).</p>`}
+          ${!live && win.open ? `<p><button class="btn btn-secondary btn-sm" data-return-start>Start another return</button></p>` : ""}`;
+        if (!live && win.open) $("[data-return-start]", host).addEventListener("click", () => showForm(o));
+        return;
+      }
+      host.innerHTML = `<h2>Changed your mind?</h2>
+        <p class="muted">Unopened, sealed items can come back for a full refund — just start the return by <b>${when(win.closesAt)}</b> (${win.days || 7} days after delivery).</p>
+        <p><button class="btn btn-secondary" data-return-start>Start a return</button></p>`;
+      $("[data-return-start]", host).addEventListener("click", () => showForm(o));
+    }
+    function showForm(o) {
+      const host = $("[data-order-returns]");
+      const rows = o.items.map((l, i) => `<label class="check"><input type="checkbox" name="line" value="${i}" data-qty="${l.qty}"> <span>${l.qty > 1 ? `<input class="input qty-in" type="number" min="1" max="${l.qty}" value="${l.qty}" aria-label="How many ${BW.escapeHtml(l.name)}"> ` : ""}${BW.escapeHtml(l.name)} <span class="muted small">${dollars(l.unit)} each</span></span></label>`).join("");
+      host.innerHTML = `<h2>Start a return</h2>
+        <form class="form-grid" data-return-form novalidate>
+          <div class="form-error full" data-error hidden></div>
+          <div class="field full"><span class="label">What are you sending back?</span><div class="stack gap-sm">${rows}</div></div>
+          <div class="field full"><label for="r-reason">Why?</label><select class="input select" id="r-reason" name="reason">${REASONS.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></div>
+          <div class="field full"><label for="r-note">Anything we should know? <span class="muted">(optional)</span></label><textarea class="input" id="r-note" name="note" rows="2" maxlength="500"></textarea></div>
+          <p class="muted small full m-0">Items must be unopened with the seals intact. Return postage is yours unless the order arrived damaged or wrong; we refund the items and their sales tax.</p>
+          <div class="full row gap-sm"><button class="btn btn-primary" type="submit">Request the return</button><button class="btn btn-ghost" type="button" data-return-cancel>Never mind</button></div>
+        </form>`;
+      $("[data-return-cancel]", host).addEventListener("click", () => renderReturns(o));
+      $("[data-return-form]", host).addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const err = $("[data-error]", host), btn = $("button[type=submit]", host);
+        const items = $$("input[name=line]:checked", host).map((c) => {
+          const qtyInput = c.closest(".check").querySelector(".qty-in");
+          return { i: Number(c.value), qty: qtyInput ? Number(qtyInput.value) : Number(c.dataset.qty) };
+        });
+        if (!items.length) { err.textContent = "Tick the items you're sending back."; err.hidden = false; return; }
+        err.hidden = true;
+        btn.disabled = true;
+        try {
+          const r = await BW.auth.api(`/api/orders/${encodeURIComponent(id)}/return${key ? `?key=${encodeURIComponent(key)}` : ""}`, { method: "POST", body: { items, reason: $("#r-reason", host).value, note: $("#r-note", host).value } });
+          render(r.order);
+          BW.toast("Return requested — we'll e-mail you the go-ahead and the address.");
+        } catch (x) { err.textContent = x.message; err.hidden = false; btn.disabled = false; }
+      });
     }
     function renderPayBox(o, manual) {
       let box = $("[data-pay-box]");

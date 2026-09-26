@@ -6,9 +6,16 @@
   const { $, $$ } = BW;
   const dollars = (cents) => BW.formatPrice(cents / 100);
   const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  const FILTERS = [["", "All"], ["paid", "Paid — to blend"], ["processing", "Blending"], ["shipped", "Shipped"], ["delivered", "Delivered"], ["pending_payment", "Awaiting payment"], ["cancelled", "Cancelled"], ["refunded", "Refunded"]];
+  const FILTERS = [["", "All"], ["paid", "Paid — to blend"], ["processing", "Blending"], ["shipped", "Shipped"], ["delivered", "Delivered"], ["pending_payment", "Awaiting payment"], ["returns", "Returns"], ["cancelled", "Cancelled"], ["refunded", "Refunded"]];
   const ACTIONS = { paid: ["processing", "cancelled"], processing: ["shipped", "cancelled"], shipped: ["delivered", "refunded"], delivered: ["refunded"], pending_payment: ["paid", "cancelled"], cancelled: ["paid"], refunded: [] };
   const VERB = { paid: "Mark paid (manual)", processing: "Start blending", shipped: "Mark shipped", delivered: "Mark delivered", cancelled: "Cancel order", refunded: "Mark refunded" };
+  const RETURN_ACTIONS = {   // what an admin can do next, in order
+    requested: [["approve", "Approve return", "btn-primary"], ["decline", "Decline", "btn-danger"]],
+    approved: [["received", "Parcel arrived", "btn-primary"], ["refund", "Refund now", "btn-primary"], ["cancel", "Cancel return", "btn-ghost"]],
+    received: [["refund", "Refund", "btn-primary"], ["cancel", "Cancel return", "btn-ghost"]],
+    refunded: [], declined: [], cancelled: []
+  };
+  const RETURN_LABEL = { requested: "Requested", approved: "Approved — waiting for the parcel", received: "Parcel received", refunded: "Refunded", declined: "Declined", cancelled: "Cancelled" };
   const addressText = (a) => [a.name, a.line1, a.line2, `${a.city}, ${a.state} ${a.zip}`].filter(Boolean).join("\n");
   // Pirate Ship (and every other label tool) imports a spreadsheet and asks you to map the columns once — plain headers.
   const CSV_COLS = [["Order", (o) => o.number], ["Name", (o) => o.address.name], ["Address Line 1", (o) => o.address.line1], ["Address Line 2", (o) => o.address.line2 || ""],
@@ -50,7 +57,7 @@
     function renderRows() {
       const rows = $("[data-admin-rows]");
       if (!state.orders.length) { rows.innerHTML = '<tr><td colspan="6" class="muted">No orders here yet.</td></tr>'; return; }
-      rows.innerHTML = state.orders.map((o) => `<tr data-id="${o.id}"${o.id === state.selected ? ' class="is-selected"' : ""}><td><b>${o.number}</b><br><span class="muted small">${BW.providerName(o.provider)}${o.manual ? " · manual" : ""}</span>${o.reportedAt && o.status === "pending_payment" ? '<br><span class="badge mint">reported</span>' : ""}</td><td>${when(o.createdAt)}</td><td>${BW.escapeHtml(o.email)}<br><span class="muted small">${BW.escapeHtml(o.city || "")}${o.state ? ", " + o.state : ""}</span></td><td class="small">${o.items.map(BW.escapeHtml).join("<br>")}</td><td class="num">${dollars(o.total)}</td><td>${BW.orderBadge(o.status)}</td></tr>`).join("");
+      rows.innerHTML = state.orders.map((o) => `<tr data-id="${o.id}"${o.id === state.selected ? ' class="is-selected"' : ""}><td><b>${o.number}</b><br><span class="muted small">${BW.providerName(o.provider)}${o.manual ? " · manual" : ""}</span>${o.reportedAt && o.status === "pending_payment" ? '<br><span class="badge mint">reported</span>' : ""}${o.openReturns ? '<br><span class="badge amber">return</span>' : ""}${o.refunded ? `<br><span class="muted small">−${dollars(o.refunded)} refunded</span>` : ""}</td><td>${when(o.createdAt)}</td><td>${BW.escapeHtml(o.email)}<br><span class="muted small">${BW.escapeHtml(o.city || "")}${o.state ? ", " + o.state : ""}</span></td><td class="small">${o.items.map(BW.escapeHtml).join("<br>")}</td><td class="num">${dollars(o.total)}</td><td>${BW.orderBadge(o.status)}</td></tr>`).join("");
     }
     async function open(id) {
       state.selected = id; renderRows();
@@ -67,6 +74,13 @@
         <div class="row gap-sm mb-1" data-admin-actions>${(ACTIONS[o.status] || []).map((s) => `<button class="btn btn-sm ${s === "cancelled" || s === "refunded" ? "btn-danger" : "btn-primary"}" data-set-status="${s}">${VERB[s]}</button>`).join("")}</div>
         <div class="row gap-sm mb-1"><a class="btn btn-secondary btn-sm" href="/packing-slip?id=${o.id}&amp;print=1" target="_blank" rel="noopener">Print packing slip</a><button class="btn btn-secondary btn-sm" data-copy-address>Copy address</button><a class="btn btn-ghost btn-sm" href="/order?id=${o.id}" target="_blank" rel="noopener">Customer view</a></div>
         <div class="form-error mb-1" data-error hidden></div>
+        ${(o.returns || []).length ? `<h3 class="small-h">Returns</h3><div class="stack gap-sm mb-1">${o.returns.map((r) => `
+          <div class="notice" data-return="${r.id}">
+            <b>${RETURN_LABEL[r.status] || r.status}</b> · ${r.items.map((i) => `${i.qty} × ${BW.escapeHtml(i.name)}`).join(", ")} · ${BW.escapeHtml(r.reasonText || "")}
+            ${r.note ? `<br><span class="muted small">“${BW.escapeHtml(r.note)}”</span>` : ""}
+            <br><span class="muted small">${r.status === "refunded" ? `${dollars(r.amount)} refunded ${r.refundedAt ? when(r.refundedAt) : ""}${r.automatic ? "" : " — send this one by hand"}` : `about ${dollars(r.amount)} (items + tax)`} · asked ${when(r.createdAt)}</span>
+            ${(RETURN_ACTIONS[r.status] || []).length ? `<div class="row gap-sm mt-05">${(RETURN_ACTIONS[r.status] || []).map(([a, label, cls]) => `<button class="btn btn-sm ${cls}" data-return-action="${a}" data-return-id="${r.id}">${label}</button>`).join("")}${r.status !== "requested" ? `<label class="check m-0"><input type="checkbox" data-return-ship="${r.id}"> <span class="small">also refund shipping</span></label>` : ""}</div>` : ""}
+          </div>`).join("")}</div>` : ""}
         <h3 class="small-h">Ship to</h3><p class="addr">${BW.orderAddress(o.address)}</p><p class="muted small">${BW.escapeHtml(o.email)} · ${o.shippingMethod.label} (${o.shippingMethod.eta})</p>
         <h3 class="small-h">Items</h3><div class="order-items mb-1">${BW.orderItems(o)}</div>
         ${o.items.some((l) => l.custom) ? `<div class="notice mb-1">Custom blend${o.items.filter((l) => l.custom).length > 1 ? "s" : ""}: ${o.items.filter((l) => l.custom).map((l) => `<b>${BW.escapeHtml(l.name)}</b> — ${l.ingredients.map((i) => `${BW.escapeHtml(i[0])} ${i[1]}`).join(", ")} per ${l.custom.format === "capsule" ? "capsule" : "scoop"}`).join("; ")}</div>` : ""}
@@ -88,6 +102,20 @@
           await load(); await open(id);
         } catch (e) { err.textContent = e.message; err.hidden = false; }
       };
+      $$("[data-return-action]", box).forEach((b) => b.addEventListener("click", async () => {
+        const action = b.dataset.returnAction, rid = b.dataset.returnId;
+        const ship = $(`[data-return-ship="${rid}"]`, box);
+        let note = "";
+        if (action === "decline") { note = window.prompt("Why are you declining this return? (the customer sees this)") || ""; if (!note) return; }
+        if (action === "refund" && !confirm(`Refund this return${ship && ship.checked ? " including the original shipping" : ""}?`)) return;
+        err.hidden = true;
+        b.disabled = true;
+        try {
+          await BW.auth.api(`/api/admin/returns/${rid}`, { method: "POST", body: { action, note, includeShipping: !!(ship && ship.checked) } });
+          BW.toast(action === "refund" ? "Refund sent." : "Return updated.");
+          await load(); await open(id);
+        } catch (e2) { err.textContent = e2.message; err.hidden = false; b.disabled = false; }
+      }));
       $("[data-copy-address]", box).addEventListener("click", async (e) => {
         const text = addressText(o.address);
         try { await navigator.clipboard.writeText(text); BW.toast("Address copied — paste it into the label."); }

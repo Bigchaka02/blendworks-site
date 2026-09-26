@@ -11,7 +11,7 @@ export async function run() {
   const ORIGIN = "https://blendworks.fit", now = () => Math.floor(Date.now() / 1000);
 
   /* ---------- in-memory D1 ---------- */
-  const db = { users: [], sessions: [], tokens: [], attempts: [], orders: [], events: [], webhooks: [] };
+  const db = { users: [], sessions: [], tokens: [], attempts: [], orders: [], events: [], webhooks: [], returns: [] };
   const stmt = (row, rows) => ({ first: async () => row || null, run: async () => ({}), all: async () => ({ results: rows || (row ? [row] : []) }) });
   function exec(sql, p) {
     sql = sql.replace(/\s+/g, " ").trim();
@@ -20,7 +20,24 @@ export async function run() {
     if (sql.startsWith("DELETE FROM auth_attempts")) return stmt(null);
     if (sql.startsWith("SELECT id FROM users WHERE email = ?") || sql.startsWith("SELECT * FROM users WHERE email = ?")) return stmt(db.users.find((u) => u.email === p[0]));
     if (sql.startsWith("INSERT INTO users")) { db.users.push({ id: p[0], email: p[1], name: p[2], password_hash: p[3], created_at: p[4], updated_at: p[5], role: "customer", email_verified_at: null }); return stmt(null); }
-    if (sql.startsWith("INSERT INTO sessions")) { db.sessions.push({ id: p[0], user_id: p[1] }); return stmt(null); }
+    if (sql.startsWith("INSERT INTO sessions")) { db.sessions.push({ id: p[0], user_id: p[1], expires_at: p[3], last_seen_at: p[4] }); return stmt(null); }
+    if (sql.startsWith("SELECT s.id AS sid")) { const ses = db.sessions.find((x) => x.id === p[0] && x.expires_at > p[1]); const u = ses && db.users.find((x) => x.id === ses.user_id); return stmt(u ? Object.assign({ sid: ses.id, last_seen_at: ses.last_seen_at }, u) : null); }
+    if (sql.startsWith("UPDATE sessions SET last_seen_at")) return stmt(null);
+    if (sql.startsWith("SELECT * FROM returns WHERE order_id")) return stmt(null, db.returns.filter((r) => r.order_id === p[0]));
+    if (sql.startsWith("SELECT * FROM returns WHERE id")) return stmt(db.returns.find((r) => r.id === p[0]));
+    if (sql.startsWith("INSERT INTO returns")) { db.returns.push({ id: p[0], order_id: p[1], status: "requested", items: p[2], reason: p[3], customer_note: p[4], amount: p[5], admin_note: null, refund_ref: null, refunded_at: null, created_at: p[6], updated_at: p[7] }); return stmt(null); }
+    if (sql.startsWith("UPDATE returns SET")) {   // the handler builds its own SET list
+      const cols = sql.slice("UPDATE returns SET ".length, sql.indexOf(" WHERE")).split(",").map((x) => x.trim().split(" ")[0]);
+      const r = db.returns.find((x) => x.id === p[p.length - 1]);
+      cols.forEach((c, i) => { r[c] = p[i]; });
+      return stmt(null);
+    }
+    if (sql.startsWith("UPDATE orders SET refunded_cents")) {
+      const o = db.orders.find((x) => x.id === p[2]);
+      o.refunded_cents = p[0]; o.updated_at = p[1];
+      if (sql.includes("status = 'refunded'")) o.status = "refunded";
+      return stmt(null);
+    }
     if (sql.startsWith("DELETE FROM sessions WHERE expires_at")) return stmt(null);
     if (sql.startsWith("DELETE FROM sessions WHERE user_id = ?")) { db.sessions = db.sessions.filter((x) => x.user_id !== p[0]); return stmt(null); }
     if (sql.startsWith("UPDATE users SET password_hash = ?, email_verified_at = COALESCE")) { const u = db.users.find((x) => x.id === p[3]); Object.assign(u, { password_hash: p[0], email_verified_at: u.email_verified_at || p[1], updated_at: p[2] }); return stmt(null); }
@@ -57,7 +74,7 @@ export async function run() {
     ASSETS: { fetch: (u) => fetch(new URL(u).pathname) },   // the local preview serves the JSON data files
     SITE_URL: ORIGIN, STRIPE_SECRET_KEY: "sk_test_fake", STRIPE_WEBHOOK_SECRET: "whsec_fake", PAYPAL_CLIENT_ID: "pp_id", PAYPAL_CLIENT_SECRET: "pp_secret",
     CASHAPP_CASHTAG: "$blendworks", VENMO_HANDLE: "@blendworks-fit",
-    ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC",
+    ZELLE_CONTACT: "pay@blendworks.fit", ZELLE_NAME: "BlendWorks LLC", RETURN_ADDRESS: "BlendWorks Returns\n1 Blend Way\nLouisville, KY 40202",
     RESEND_API_KEY: "re_fake", EMAIL_FROM: "BlendWorks <contact.blendworks@blendworks.fit>", CONTACT_EMAIL: "contact.blendworks@blendworks.fit"
   };
   const pending = [];   // waitUntil work (e-mails) — awaited with settle() before reading the outbox
@@ -67,7 +84,7 @@ export async function run() {
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED", taxOff: false, taxSeq: 0 };
+  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED", taxOff: false, taxSeq: 0, refundSeq: 0 };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
     if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) {   // expanded like the Worker asks (payment_intent.latest_charge) so the wallet can be read back
@@ -85,6 +102,9 @@ export async function run() {
       const tax = fake.taxOff ? 0 : Math.round(taxable * 0.07);
       return new Response(JSON.stringify({ id: "taxcalc_" + (++fake.taxSeq), tax_amount_exclusive: tax, amount_total: taxable + tax }));
     }
+    if (url === "https://api.stripe.com/v1/refunds") { const p = Object.fromEntries(new URLSearchParams(init.body)); calls.push({ refund: p }); return new Response(JSON.stringify({ id: "re_fake_" + (++fake.refundSeq), amount: Number(p.amount) })); }
+    if (url === "https://api.stripe.com/v1/tax/transactions/create_reversal") { const p = Object.fromEntries(new URLSearchParams(init.body)); calls.push({ taxReversal: p }); return new Response(JSON.stringify({ id: "taxrev_" + (++fake.refundSeq) })); }
+    if (/\/v2\/payments\/captures\/[^/]+\/refund$/.test(url)) { calls.push({ ppRefund: JSON.parse(init.body) }); return new Response(JSON.stringify({ id: "PPREF-1", status: "COMPLETED" })); }
     if (url === "https://api.stripe.com/v1/tax/transactions/create_from_calculation") {
       const p = Object.fromEntries(new URLSearchParams(init.body));
       calls.push({ taxTx: p });
@@ -102,6 +122,22 @@ export async function run() {
     if (url.endsWith("/v2/checkout/orders/PP-ORDER-1/capture")) { calls.push({ capture: true }); return new Response(JSON.stringify({ id: "PP-ORDER-1", status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "CAP-1" }] } }] })); }
     if (url.startsWith("https://api.resend.com/")) { const m = JSON.parse(init.body); calls.push({ email: m.subject, to: m.to, from: m.from, html: m.html, replyTo: m.reply_to || null }); return new Response("{}"); }
     return realFetch(input, init);
+  };
+  // Sessions: `new Request()` refuses a Cookie header in a browser, so admin calls go through a request-shaped object.
+  const asAdmin = (token) => async (method, path, body) => {
+    const raw = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body);
+    const headers = { "content-type": "application/json", cookie: `bw_session=${token}`, "cf-connecting-ip": "9.9.9.9" };
+    const req = { method, url: ORIGIN + path, headers: { get: (k) => headers[String(k).toLowerCase()] || null }, text: async () => raw || "", json: async () => JSON.parse(raw || "{}") };
+    const res = await mod.default.fetch(req, env, ctx);
+    let data = null; try { data = res.status === 204 ? null : await res.json(); } catch (e) { /* no body */ }
+    return { status: res.status, data };
+  };
+  const makeAdmin = async (email) => {   // an admin user + a live session, straight into the stub tables
+    const token = "admintoken", id = "admin-" + email;
+    const hex = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    db.users.push({ id, email, name: "Admin", password_hash: "x", role: "admin", email_verified_at: now(), created_at: now(), updated_at: now() });
+    db.sessions.push({ id: hex, user_id: id, expires_at: now() + 86400, last_seen_at: now() });
+    return asAdmin(token);
   };
   const call = async (method, path, body, headers = {}) => {
     const h = Object.assign({ "CF-Connecting-IP": "9.9.9.9" }, headers);
@@ -279,6 +315,54 @@ export async function run() {
     const zt = await call("POST", "/api/checkout", { email: "tax3@example.com", address, shippingMethod: "standard", provider: "paypal", items: taxItems });
     out.taxNoKey = { status: zt.status, tax: db.orders[db.orders.length - 1].tax, calls: calls.filter((c) => c.taxCalc).length - calcsBeforeNoKey };
     env.STRIPE_SECRET_KEY = savedSkTax;
+    // returns: window, request, admin approve -> received -> refund (money, tax reversal, e-mails)
+    const admin = await makeAdmin("boss@example.com");
+    const ret = db.orders[0];   // the paid Stripe order from the top of this file
+    out.returnBeforeShipping = (await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 0, qty: 1 }], reason: "changed_mind" })).status;
+    ret.shipped_at = now() - 3 * 86400; ret.delivered_at = now() - 86400; ret.status = "delivered";
+    out.returnTooMany = (await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 0, qty: 9 }], reason: "other" })).status;
+    out.returnNoItems = (await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [], reason: "other" })).status;
+    const mailsBeforeReturn = calls.filter((c) => c.email).length;
+    const rq = await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 0, qty: 1 }], reason: "changed_mind", note: "Bought two by mistake." });
+    await settle();
+    const ownerReturnMail = calls.filter((c) => c.email && /^Return requested/.test(c.email)).pop();
+    out.returnRequest = { status: rq.status, returns: rq.data.order.returns.map((r) => `${r.status}:${r.amount}`), windowOpen: rq.data.order.returnWindow.open,
+      ownerMail: !!ownerReturnMail, mails: calls.filter((c) => c.email).length - mailsBeforeReturn, event: db.events.filter((e) => e.order_id === ret.id).pop().type };
+    out.returnDuplicate = (await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 1, qty: 1 }], reason: "other" })).status;
+    const rid = db.returns[0].id;
+    out.returnNotAdmin = (await call("POST", `/api/admin/returns/${rid}`, { action: "approve" })).status;
+    const apRet = await admin("POST", `/api/admin/returns/${rid}`, { action: "approve" });
+    await settle();
+    const approveMail = calls.filter((c) => c.email && /^Return approved/.test(c.email)).pop();
+    out.returnApprove = { status: apRet.status, state: db.returns[0].status, mailTo: approveMail && approveMail.to, hasAddress: !!(approveMail && approveMail.html.includes("1 Blend Way")) };
+    out.returnReceived = (await admin("POST", `/api/admin/returns/${rid}`, { action: "received" })).status;
+    out.returnApproveTwice = (await admin("POST", `/api/admin/returns/${rid}`, { action: "approve" })).status;   // already past that step
+    const refundedBefore = ret.refunded_cents || 0;
+    const rf = await admin("POST", `/api/admin/returns/${rid}`, { action: "refund" });
+    await settle();
+    const refundCall = calls.filter((c) => c.refund).pop(), reversal = calls.filter((c) => c.taxReversal).pop();
+    const refundMail = calls.filter((c) => c.email && /^Refunded/.test(c.email)).pop();
+    const line0 = JSON.parse(ret.items)[0];
+    out.returnRefund = { status: rf.status, state: db.returns[0].status, amount: db.returns[0].amount,
+      expected: line0.unit + Math.round(ret.tax * line0.unit / ret.subtotal), stripeAmount: refundCall && Number(refundCall.refund.amount), paymentIntent: refundCall && refundCall.refund.payment_intent,
+      orderRefunded: ret.refunded_cents - refundedBefore, orderStatus: ret.status, reversal: reversal && { mode: reversal.taxReversal.mode, flat: reversal.taxReversal.flat_amount, ref: reversal.taxReversal.reference }, mail: !!refundMail };
+    out.returnRefundTwice = (await admin("POST", `/api/admin/returns/${rid}`, { action: "refund" })).status;
+    // a declined return tells the customer why; a PayPal order refunds through PayPal
+    const rq2 = await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 1, qty: 1 }], reason: "other" });
+    const rid2 = db.returns[1].id;
+    const dec = await admin("POST", `/api/admin/returns/${rid2}`, { action: "decline", note: "The seal was broken." });
+    await settle();
+    const declineMail = calls.filter((c) => c.email && /^About your return/.test(c.email)).pop();
+    out.returnDecline = { request: rq2.status, status: dec.status, state: db.returns[1].status, reasonShown: !!(declineMail && declineMail.html.includes("The seal was broken.")) };
+    const ppOrder = db.orders[2];   // the PayPal order, captured earlier
+    ppOrder.shipped_at = now() - 2 * 86400; ppOrder.delivered_at = now() - 86400;
+    await call("POST", `/api/orders/${ppOrder.id}/return?key=${ppOrder.access_key}`, { items: [{ i: 0, qty: 1 }], reason: "arrived_damaged" });
+    const ridPp = db.returns[2].id;
+    await admin("POST", `/api/admin/returns/${ridPp}`, { action: "approve" });
+    await admin("POST", `/api/admin/returns/${ridPp}`, { action: "refund", includeShipping: true });
+    await settle();
+    const ppRefund = calls.filter((c) => c.ppRefund).pop();
+    out.returnPaypal = { amount: db.returns[2].amount, paypalValue: ppRefund && ppRefund.ppRefund.amount.value, includesShipping: db.returns[2].amount > JSON.parse(ppOrder.items)[0].unit, orderStatus: ppOrder.status };
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });

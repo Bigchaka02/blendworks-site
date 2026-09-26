@@ -20,7 +20,10 @@
    Calculations API, so the total is the same wherever the customer pays, then records a Tax Transaction when the
    order is paid so it shows up in Stripe's filing reports. No registration in the customer's state = zero tax.
    "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
-   "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden. */
+   "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden.
+   Returns (D39): the customer starts one from their order page within 7 days of delivery for unopened items; an admin
+   approves it, marks the parcel received and refunds. Stripe and PayPal payments are refunded through their APIs, the
+   pay-in-your-app methods are marked and repaid by hand, and the Stripe Tax transaction is reversed to match. */
 import { HttpError, json, error, noContent, guard, readJson, str, normEmail, validEmail, now, ip, randomToken, hmacHex, timingEqual, enc, money } from "./lib.js";
 import { currentSession, requireUser, requireAdmin, checkSpecShape, assertRate, recordAttempt } from "./auth.js";
 import { sendEmail, esc, layout, button } from "./email.js";
@@ -40,6 +43,12 @@ const MAX_QTY = 10, MAX_LINES = 30;
 // Stripe product tax codes: what we sell, and shipping. Stripe decides taxability per state from these.
 const TAX_CODE_ITEMS = "txcd_32040001";      // Dietary Supplements
 const TAX_CODE_SHIPPING = "txcd_92010001";   // Shipping
+/* Returns policy (founder, 2026-09-26): unopened items, 7 days from delivery. The window falls back to 21 days from
+   despatch when nobody marked the order delivered, so a forgotten status change never costs a customer their return. */
+const RETURN_DAYS_AFTER_DELIVERY = 7, RETURN_DAYS_AFTER_SHIPPING = 21;
+const RETURN_REASONS = { changed_mind: "Changed my mind", ordered_by_mistake: "Ordered by mistake", arrived_damaged: "Arrived damaged", wrong_item: "Wrong item sent", other: "Other" };
+const RETURN_OPEN = ["requested", "approved", "received"];   // in progress: not yet refunded, declined or cancelled
+const STRIPE_PROVIDERS = ["stripe", "applepay", "googlepay", "cashapp"];
 const siteUrl = (env, url) => (env.SITE_URL || url.origin).replace(/\/$/, "");
 const orderNumber = (o) => `BW-${o.number}`;
 
@@ -340,7 +349,7 @@ async function setPaymentInfo(env, order, info) {
   await env.DB.prepare("UPDATE orders SET payment_info = ? WHERE id = ?").bind(JSON.stringify(info), order.id).run();
   order.payment_info = JSON.stringify(info);
 }
-function orderView(o, events, admin) {
+function orderView(o, events, admin, rets) {
   const m = SHIPPING_METHODS[o.shipping_method] || {};
   const reported = (events || []).filter((e) => e.type === "reported").pop();
   return {
@@ -350,12 +359,141 @@ function orderView(o, events, admin) {
     weightOz: weightOz(parse(o.items, [])),
     address: parse(o.address, {}), tracking: parse(o.tracking, null), note: admin ? o.note : undefined,
     paymentInfo: parse(o.payment_info, null), reportedAt: reported ? reported.at : null,
+    refunded: o.refunded_cents || 0, returnWindow: returnWindow(o), returns: (rets || []).map((r) => returnView(r, admin)),
     createdAt: o.created_at, paidAt: o.paid_at, shippedAt: o.shipped_at, deliveredAt: o.delivered_at, updatedAt: o.updated_at,
     paymentRef: admin ? o.payment_ref : undefined, providerRef: admin ? o.provider_ref : undefined, userId: admin ? o.user_id : undefined,
     events: (events || []).filter((e) => admin || e.type !== "note").map((e) => ({ at: e.at, type: e.type, actor: admin ? e.actor : undefined, detail: admin || e.type !== "note" ? e.detail : undefined }))
   };
 }
 const eventsFor = async (env, id) => (await env.DB.prepare("SELECT * FROM order_events WHERE order_id = ? ORDER BY at, id").bind(id).all()).results;
+
+/* ---------- returns and refunds ---------- */
+const returnsFor = async (env, orderId) => (await env.DB.prepare("SELECT * FROM returns WHERE order_id = ? ORDER BY created_at").bind(orderId).all()).results;
+function returnWindow(order) {   // when the customer may still start a return
+  const closesAt = order.delivered_at ? order.delivered_at + RETURN_DAYS_AFTER_DELIVERY * 86400
+    : order.shipped_at ? order.shipped_at + RETURN_DAYS_AFTER_SHIPPING * 86400 : null;
+  return { open: !!closesAt && now() < closesAt && !["cancelled", "refunded"].includes(order.status), closesAt, days: RETURN_DAYS_AFTER_DELIVERY };
+}
+const returnView = (r, admin) => ({ id: r.id, status: r.status, items: parse(r.items, []), reason: r.reason, reasonText: RETURN_REASONS[r.reason] || r.reason,
+  amount: r.amount, note: r.customer_note, adminNote: admin || r.status === "declined" ? r.admin_note : undefined, automatic: !!r.refund_ref,
+  createdAt: r.created_at, updatedAt: r.updated_at, refundedAt: r.refunded_at });
+// What a return is worth: the items coming back, their share of the sales tax, and the original shipping only if an admin says so.
+function refundAmount(order, items, includeShipping) {
+  const lines = parse(order.items, []);
+  const itemsTotal = items.reduce((sum, it) => sum + lines[it.i].unit * it.qty, 0);
+  const taxShare = order.subtotal > 0 ? Math.round(order.tax * itemsTotal / order.subtotal) : 0;
+  return Math.max(0, Math.min(itemsTotal + taxShare + (includeShipping ? order.shipping : 0), order.total - (order.refunded_cents || 0)));
+}
+function checkReturnItems(order, body, existing) {
+  const lines = parse(order.items, []), already = {};
+  existing.filter((r) => RETURN_OPEN.includes(r.status) || r.status === "refunded")
+    .forEach((r) => parse(r.items, []).forEach((it) => { already[it.i] = (already[it.i] || 0) + it.qty; }));
+  const items = (Array.isArray(body.items) ? body.items : []).map((raw) => {
+    const i = Math.floor(Number(raw && raw.i)), qty = Math.floor(Number(raw && raw.qty) || 0);
+    if (!(i >= 0 && i < lines.length) || qty <= 0) throw new HttpError(400, "Choose which items you're sending back.");
+    if (qty + (already[i] || 0) > lines[i].qty) throw new HttpError(400, `You can return at most ${lines[i].qty - (already[i] || 0)} × ${lines[i].name}.`);
+    return { i, qty, name: lines[i].name, unit: lines[i].unit };
+  });
+  if (!items.length) throw new HttpError(400, "Choose which items you're sending back.");
+  return items;
+}
+async function stripeRefund(env, order, cents) {
+  const res = await fetch("https://api.stripe.com/v1/refunds", { method: "POST",
+    body: stripeForm({ payment_intent: order.payment_ref, amount: cents, "metadata[order_id]": order.id }),
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded", "Idempotency-Key": `refund-${order.id}-${order.refunded_cents || 0}-${cents}` } });
+  return (await providerJson(res, "stripe refund")).id;
+}
+async function paypalRefund(env, order, cents) {
+  const r = await paypalCall(env, "POST", `/v2/payments/captures/${encodeURIComponent(order.payment_ref)}/refund`,
+    { amount: { value: money(cents), currency_code: "USD" }, note_to_payer: `BlendWorks ${orderNumber(order)} return` }, `refund-${order.id}-${order.refunded_cents || 0}`);
+  return r.id;
+}
+async function taxReverse(env, order, cents, reference, full) {   // keep Stripe's filing record in step with the money
+  if (!env.STRIPE_SECRET_KEY || !order.tax_transaction || !order.tax) return null;
+  const params = full ? { mode: "full", original_transaction: order.tax_transaction, reference }
+    : { mode: "partial", original_transaction: order.tax_transaction, reference, flat_amount: -cents };
+  const res = await fetch("https://api.stripe.com/v1/tax/transactions/create_reversal", { method: "POST", body: stripeForm(params),
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" } });
+  if (!res.ok) { console.error("tax reversal", res.status, (await res.text()).slice(0, 300)); return null; }
+  return (await res.json()).id;
+}
+// Money back the way it came; pay-in-your-app methods are marked here and repaid by hand.
+async function refundMoney(env, order, cents) {
+  if (order.provider_ref === "manual" || !order.payment_ref) return { ref: null, automatic: false };
+  if (STRIPE_PROVIDERS.includes(order.provider) && env.STRIPE_SECRET_KEY) return { ref: await stripeRefund(env, order, cents), automatic: true };
+  if ((order.provider === "paypal" || order.provider === "venmo") && env.PAYPAL_CLIENT_ID) return { ref: await paypalRefund(env, order, cents), automatic: true };
+  return { ref: null, automatic: false };
+}
+const returnItemLines = (items) => items.map((it) => `${it.qty} × ${esc(it.name)}`).join(", ");
+
+export const requestReturn = guard(async (request, env, ctx, id, url) => {
+  const { order } = await authorizedOrder(env, request, id, url);
+  const win = returnWindow(order);
+  if (!win.open) throw new HttpError(409, order.shipped_at
+    ? `The ${RETURN_DAYS_AFTER_DELIVERY}-day return window for this order has closed — contact us and we'll see what we can do.`
+    : "This order hasn't shipped yet. Contact us and we'll cancel it instead.");
+  const existing = await returnsFor(env, id);
+  if (existing.some((r) => RETURN_OPEN.includes(r.status))) throw new HttpError(409, "There's already a return in progress for this order.");
+  const body = await readJson(request);
+  const items = checkReturnItems(order, body, existing);
+  const reason = RETURN_REASONS[body.reason] ? body.reason : "other";
+  const note = str(body.note, 500), rid = crypto.randomUUID(), t = now();
+  await env.DB.prepare("INSERT INTO returns (id, order_id, status, items, reason, customer_note, amount, created_at, updated_at) VALUES (?, ?, 'requested', ?, ?, ?, ?, ?, ?)")
+    .bind(rid, id, JSON.stringify(items), reason, note || null, refundAmount(order, items, false), t, t).run();
+  await addEvent(env, id, "customer", "return_requested", `${returnItemLines(items)} — ${RETURN_REASONS[reason]}`);
+  ctx.waitUntil(notifyOwnerReturn(env, order, items, reason, note, siteUrl(env, url)));
+  return json({ ok: true, order: orderView(order, await eventsFor(env, id), false, await returnsFor(env, id)) }, 201);
+});
+
+export const adminReturn = guard(async (request, env, ctx, rid, url) => {
+  const { user } = await requireAdmin(env, request);
+  const r = await env.DB.prepare("SELECT * FROM returns WHERE id = ?").bind(rid).first();
+  if (!r) throw new HttpError(404, "No such return.");
+  const order = await loadOrder(env, r.order_id);
+  const body = await readJson(request), action = str(body.action, 20), note = str(body.note, 500);
+  const t = now(), actor = `admin:${user.email}`, base = siteUrl(env, url);
+  const finish = async (status, extra = {}) => {
+    const sets = ["status = ?", "updated_at = ?"], vals = [status, t];
+    Object.entries(extra).forEach(([k, v]) => { sets.push(`${k} = ?`); vals.push(v); });
+    if (note) { sets.push("admin_note = ?"); vals.push(note); }
+    vals.push(rid);
+    await env.DB.prepare(`UPDATE returns SET ${sets.join(", ")} WHERE id = ?`).bind(...vals).run();
+    await addEvent(env, order.id, actor, `return_${status}`, note || null);
+    return env.DB.prepare("SELECT * FROM returns WHERE id = ?").bind(rid).first();
+  };
+  if (action === "approve") {
+    if (r.status !== "requested") throw new HttpError(409, "That return isn't waiting for a decision.");
+    await finish("approved");
+    ctx.waitUntil(notifyCustomerReturn(env, order, r, "approved", base));
+  } else if (action === "decline") {
+    if (r.status !== "requested") throw new HttpError(409, "That return isn't waiting for a decision.");
+    await finish("declined");
+    ctx.waitUntil(notifyCustomerReturn(env, order, r, "declined", base));
+  } else if (action === "received") {
+    if (r.status !== "approved") throw new HttpError(409, "Approve the return first.");
+    await finish("received");
+  } else if (action === "refund") {
+    if (!RETURN_OPEN.includes(r.status)) throw new HttpError(409, "That return has already been settled.");
+    const items = parse(r.items, []);
+    const cents = refundAmount(order, items, !!body.includeShipping);
+    if (cents <= 0) throw new HttpError(400, "There's nothing left to refund on this order.");
+    const { ref, automatic } = await refundMoney(env, order, cents);
+    const refunded = (order.refunded_cents || 0) + cents, fullyRefunded = refunded >= order.total;
+    const sets = ["refunded_cents = ?", "updated_at = ?"], vals = [refunded, t];
+    if (fullyRefunded) { sets.push("status = 'refunded'"); }
+    vals.push(order.id);
+    await env.DB.prepare(`UPDATE orders SET ${sets.join(", ")} WHERE id = ?`).bind(...vals).run();
+    const updated = await finish("refunded", { amount: cents, refund_ref: ref, refunded_at: t });
+    await addEvent(env, order.id, actor, "refunded", `$${money(cents)}${automatic ? ` via ${order.provider}` : " (to send by hand)"}`);
+    Object.assign(order, { refunded_cents: refunded, status: fullyRefunded ? "refunded" : order.status });
+    ctx.waitUntil(taxReverse(env, order, cents, `${orderNumber(order)}-refund-${rid.slice(0, 8)}`, fullyRefunded && order.refunded_cents >= order.total).catch((e) => console.error("taxReverse", e && e.message)));
+    ctx.waitUntil(notifyCustomerReturn(env, order, updated, "refunded", base));
+  } else if (action === "cancel") {
+    if (!RETURN_OPEN.includes(r.status)) throw new HttpError(409, "That return has already been settled.");
+    await finish("cancelled");
+  } else throw new HttpError(400, "Unknown action.");
+  return json({ ok: true, order: orderView(await loadOrder(env, order.id), await eventsFor(env, order.id), true, await returnsFor(env, order.id)) });
+});
 
 /* ---------- customer handlers ---------- */
 export const checkoutConfig = guard(async (request, env) => {
@@ -426,7 +564,7 @@ async function authorizedOrder(env, request, id, url) {   // owner, admin, or th
 export const getOrder = guard(async (request, env, ctx, id, url) => {
   const { order, admin } = await authorizedOrder(env, request, id, url);
   await refreshPayment(env, ctx, order, siteUrl(env, url));
-  return json({ ok: true, order: orderView(order, await eventsFor(env, id), admin) });
+  return json({ ok: true, order: orderView(order, await eventsFor(env, id), admin, await returnsFor(env, id)) });
 });
 
 export const reportPaid = guard(async (request, env, ctx, id, url) => {   // "I've sent the payment" on a manual-method order
@@ -435,7 +573,7 @@ export const reportPaid = guard(async (request, env, ctx, id, url) => {   // "I'
   if (order.status !== "pending_payment" || !info || info.mode !== "manual") throw new HttpError(409, "This order isn't waiting for a manual payment.");
   const events = await eventsFor(env, id), last = events.filter((e) => e.type === "reported").pop();
   if (!last || now() - last.at > 600) await addEvent(env, id, "customer", "reported", `Customer says the ${order.provider} payment was sent`);
-  return json({ ok: true, order: orderView(order, await eventsFor(env, id), false) });
+  return json({ ok: true, order: orderView(order, await eventsFor(env, id), false, await returnsFor(env, id)) });
 });
 
 export const listOrders = guard(async (request, env) => {
@@ -466,13 +604,16 @@ export const stripeWebhook = guard(async (request, env, ctx, url) => {
 export const adminOrders = guard(async (request, env, ctx, url) => {
   await requireAdmin(env, request);
   const status = str(url.searchParams.get("status"), 20), q = str(url.searchParams.get("q"), 80).toLowerCase();
-  const rows = await env.DB.prepare("SELECT *, (SELECT MAX(at) FROM order_events e WHERE e.order_id = orders.id AND e.type = 'reported') AS reported_at FROM orders WHERE (? = '' OR status = ?) AND (? = '' OR email LIKE ? OR CAST(number AS TEXT) = ?) ORDER BY created_at DESC LIMIT 200")
-    .bind(status, status, q, `%${q}%`, q.replace(/^bw-/, "")).all();
+  const openReturns = "(SELECT COUNT(*) FROM returns r WHERE r.order_id = orders.id AND r.status IN ('requested', 'approved', 'received'))";
+  const rows = await env.DB.prepare(`SELECT *, (SELECT MAX(at) FROM order_events e WHERE e.order_id = orders.id AND e.type = 'reported') AS reported_at, ${openReturns} AS open_returns
+    FROM orders WHERE (? = '' OR (? = 'returns' AND ${openReturns} > 0) OR (? != 'returns' AND status = ?)) AND (? = '' OR email LIKE ? OR CAST(number AS TEXT) = ?)
+    ORDER BY created_at DESC LIMIT 200`).bind(status, status, status, status, q, `%${q}%`, q.replace(/^bw-/, "")).all();
   const counts = (await env.DB.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all()).results;
-  return json({ ok: true, counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
+  const openReturnOrders = await env.DB.prepare("SELECT COUNT(DISTINCT order_id) AS n FROM returns WHERE status IN ('requested', 'approved', 'received')").first();
+  return json({ ok: true, counts: Object.assign(Object.fromEntries(counts.map((c) => [c.status, c.n])), { returns: (openReturnOrders && openReturnOrders.n) || 0 }),
     orders: rows.results.map((o) => {
       const items = parse(o.items, []), address = parse(o.address, {});
-      return { id: o.id, number: orderNumber(o), key: o.access_key, email: o.email, status: o.status, provider: o.provider, manual: o.provider_ref === "manual", reportedAt: o.reported_at || null,
+      return { id: o.id, number: orderNumber(o), key: o.access_key, email: o.email, status: o.status, provider: o.provider, manual: o.provider_ref === "manual", reportedAt: o.reported_at || null, openReturns: o.open_returns || 0, refunded: o.refunded_cents || 0,
         total: o.total, createdAt: o.created_at, city: address.city, state: address.state, address, weightOz: weightOz(items), tracking: parse(o.tracking, null), items: items.map((l) => `${l.qty} × ${l.name}`) };
     }) });
 });
@@ -481,7 +622,7 @@ export const adminOrder = guard(async (request, env, ctx, id) => {
   await requireAdmin(env, request);
   const order = await loadOrder(env, id);
   if (!order) throw new HttpError(404, "No such order.");
-  return json({ ok: true, order: orderView(order, await eventsFor(env, id), true) });
+  return json({ ok: true, order: orderView(order, await eventsFor(env, id), true, await returnsFor(env, id)) });
 });
 
 export const adminUpdateOrder = guard(async (request, env, ctx, id, url) => {
@@ -512,11 +653,41 @@ export const adminUpdateOrder = guard(async (request, env, ctx, id, url) => {
   await env.DB.prepare(`UPDATE orders SET ${sets.join(", ")} WHERE id = ?`).bind(...vals).run();
   const updated = await loadOrder(env, id);
   if (notifyKind) ctx.waitUntil(notify(env, updated, notifyKind, siteUrl(env, url)));
-  return json({ ok: true, order: orderView(updated, await eventsFor(env, id), true) });
+  return json({ ok: true, order: orderView(updated, await eventsFor(env, id), true, await returnsFor(env, id)) });
 });
 
 /* ---------- order e-mails (worker/email.js; skipped until RESEND_API_KEY exists) ---------- */
 const slipUrl = (order, base) => `${base}/packing-slip?id=${order.id}&key=${order.access_key}`;
+const orderUrl = (order, base) => `${base}/order?id=${order.id}&key=${order.access_key}`;
+async function notifyOwnerReturn(env, order, items, reason, note, base) {
+  const to = env.CONTACT_EMAIL || (env.EMAIL_FROM || "").replace(/^.*<|>$/g, "");
+  if (!to) return false;
+  const body = `<p><b>${orderNumber(order)}</b> · ${esc(order.email)}</p><p>${returnItemLines(items)}<br>Reason: <b>${esc(RETURN_REASONS[reason])}</b></p>
+    ${note ? `<p style="white-space:pre-wrap">“${esc(note)}”</p>` : ""}
+    <p>Approve or decline it in the fulfilment console, then refund once the parcel is back and the seals are intact.</p>
+    ${button(`${base}/admin`, "Open the fulfilment console")}`;
+  return sendEmail(env, to, `Return requested · ${orderNumber(order)}`, layout("A customer wants to return something", body, orderNumber(order)), { replyTo: order.email });
+}
+async function notifyCustomerReturn(env, order, r, kind, base) {
+  const items = returnItemLines(parse(r.items, []));
+  if (kind === "approved") {
+    const address = (env.RETURN_ADDRESS || "").trim();
+    return sendEmail(env, order.email, `Return approved · ${orderNumber(order)}`, layout("Your return is approved", `
+      <p>Send ${items} back to us unopened, with the seals intact. Write <b>${orderNumber(order)}</b> on the outside of the parcel (or pop the packing slip inside) so we know whose it is.</p>
+      ${address ? `<p style="white-space:pre-line;font-size:15px"><b>Return address</b><br>${esc(address)}</p>` : "<p>We'll send you the return address in a moment.</p>"}
+      <p>Return postage is yours unless the order arrived damaged or wrong. Once it's back and the seals are intact we refund <b>$${money(r.amount)}</b> to your original payment method, usually within two business days.</p>
+      ${button(orderUrl(order, base), "View your order")}`, orderNumber(order)));
+  }
+  if (kind === "declined") {
+    return sendEmail(env, order.email, `About your return · ${orderNumber(order)}`, layout("We couldn't accept this return", `
+      <p>We're sorry — we can't take ${items} back.${r.admin_note ? ` <br><br>${esc(r.admin_note)}` : ""}</p>
+      <p>If you think that's a mistake, reply to this e-mail and a human will look again.</p>`, orderNumber(order)));
+  }
+  return sendEmail(env, order.email, `Refunded $${money(r.amount)} · ${orderNumber(order)}`, layout("Your refund is on its way", `
+    <p>We've refunded <b>$${money(r.amount)}</b> for ${items}.</p>
+    <p>${r.refund_ref ? "It goes back to the card or account you paid with — your bank usually shows it within 5–10 business days." : "We'll send it back the same way you paid us, by hand, within one business day."}</p>
+    ${button(orderUrl(order, base), "View your order")}`, orderNumber(order)));
+}
 // The shop's own "there's an order" e-mail: what to pack, where it goes, and the two links that start the work.
 async function notifyOwner(env, order, base) {
   const to = env.CONTACT_EMAIL || (env.EMAIL_FROM || "").replace(/^.*<|>$/g, "");
