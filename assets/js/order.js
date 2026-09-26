@@ -72,7 +72,7 @@
       $("[data-order-subtotal]").textContent = dollars(o.amounts.subtotal);
       $("[data-order-method]").textContent = `(${o.shippingMethod.label}, ${o.shippingMethod.eta})`;
       $("[data-order-shipping]").textContent = o.amounts.shipping ? dollars(o.amounts.shipping) : "Free";
-      $("[data-order-tax]").textContent = o.amounts.tax ? dollars(o.amounts.tax) : "—";
+      $("[data-order-tax]").textContent = o.amounts.tax ? dollars(o.amounts.tax) : "None";
       $("[data-order-total]").textContent = dollars(o.amounts.total);
       $("[data-order-address]").innerHTML = BW.orderAddress(o.address);
       $("[data-order-email]").textContent = `Updates go to ${o.email}.`;

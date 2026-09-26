@@ -11,7 +11,7 @@ const PBKDF2_ITERATIONS = 25000;
 const MAX_BLENDS_PER_USER = 50;
 const RATE = {                          // key -> [max attempts, window seconds]
   "login:ip": [30, 900], "login:email": [10, 900], "signup:ip": [8, 3600], "password:user": [10, 900], "checkout:ip": [30, 3600],
-  "forgot:ip": [5, 3600], "forgot:email": [3, 3600], "verify:user": [3, 3600], "contact:ip": [5, 3600]
+  "forgot:ip": [5, 3600], "forgot:email": [3, 3600], "verify:user": [3, 3600], "contact:ip": [5, 3600], "quote:ip": [80, 3600]
 };
 const TOKEN_TTL = { verify: 86400, reset: 3600 };   // seconds a verification / reset link stays valid
 const siteUrl = (env, url) => (env.SITE_URL || url.origin).replace(/\/$/, "");

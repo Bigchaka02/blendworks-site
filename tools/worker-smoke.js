@@ -32,13 +32,14 @@ export async function run() {
     if (sql.startsWith("UPDATE email_tokens SET used_at = ?")) { const k = db.tokens.find((x) => x.id === p[1]); if (k) k.used_at = p[0]; return stmt(null); }
     if (sql.startsWith("INSERT INTO orders")) {
       const number = db.orders.reduce((m, o) => Math.max(m, o.number), 1000) + 1;
-      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
+      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], tax_calculation: p[12], tax_transaction: null, created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
       return stmt(null);
     }
     if (sql.startsWith("SELECT * FROM orders WHERE id = ?")) return stmt(db.orders.find((o) => o.id === p[0]));
     if (sql.startsWith("UPDATE orders SET provider_ref = 'manual', payment_info")) { Object.assign(db.orders.find((o) => o.id === p[1]), { provider_ref: "manual", payment_info: p[0] }); return stmt(null); }
     if (sql.startsWith("UPDATE orders SET provider_ref")) { db.orders.find((o) => o.id === p[1]).provider_ref = p[0]; return stmt(null); }
     if (sql.startsWith("UPDATE orders SET payment_info")) { db.orders.find((o) => o.id === p[1]).payment_info = p[0]; return stmt(null); }
+    if (sql.startsWith("UPDATE orders SET tax_transaction")) { db.orders.find((o) => o.id === p[1]).tax_transaction = p[0]; return stmt(null); }
     if (sql.startsWith("UPDATE orders SET status = 'paid'")) { const o = db.orders.find((o) => o.id === p[3]); if (o.status === "pending_payment") Object.assign(o, { status: "paid", payment_ref: p[0], paid_at: p[1], updated_at: p[2] }); return stmt(null); }
     if (sql.startsWith("UPDATE orders SET status = 'cancelled'")) { const o = db.orders.find((o) => o.id === p[1]); if (o.status === "pending_payment") Object.assign(o, { status: "cancelled", updated_at: p[0] }); return stmt(null); }
     if (sql.startsWith("INSERT INTO order_events")) {
@@ -66,7 +67,7 @@ export async function run() {
   /* ---------- fake provider endpoints ---------- */
   const calls = [];
   const realFetch = window.fetch;
-  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED" };
+  const fake = { stripePaid: false, wallet: null, pmType: null, cashappOff: false, paypalStatus: "APPROVED", taxOff: false, taxSeq: 0 };
   window.fetch = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
     if (url.startsWith("https://api.stripe.com/v1/checkout/sessions/")) {   // expanded like the Worker asks (payment_intent.latest_charge) so the wallet can be read back
@@ -74,6 +75,20 @@ export async function run() {
       const pmd = fake.wallet ? { type: "card", card: { wallet: { type: fake.wallet } } } : fake.pmType ? { type: fake.pmType } : null;
       const pi = pmd ? { id: "pi_fake_1", latest_charge: { payment_method_details: pmd } } : "pi_fake_1";
       return new Response(JSON.stringify({ id: url.split("/").pop().split("?")[0], payment_status: fake.stripePaid ? "paid" : "unpaid", status: fake.stripePaid ? "complete" : "open", payment_intent: pi }));
+    }
+    if (url === "https://api.stripe.com/v1/tax/calculations") {
+      const p = Object.fromEntries(new URLSearchParams(init.body));
+      calls.push({ taxCalc: p });
+      if (p["customer_details[address][postal_code]"] === "00000") return new Response(JSON.stringify({ error: { code: "customer_tax_location_invalid", message: "bad address" } }), { status: 400 });
+      let taxable = Number(p["shipping_cost[amount]"] || 0);
+      for (let i = 0; p[`line_items[${i}][amount]`] !== undefined; i++) taxable += Number(p[`line_items[${i}][amount]`]);
+      const tax = fake.taxOff ? 0 : Math.round(taxable * 0.07);
+      return new Response(JSON.stringify({ id: "taxcalc_" + (++fake.taxSeq), tax_amount_exclusive: tax, amount_total: taxable + tax }));
+    }
+    if (url === "https://api.stripe.com/v1/tax/transactions/create_from_calculation") {
+      const p = Object.fromEntries(new URLSearchParams(init.body));
+      calls.push({ taxTx: p });
+      return new Response(JSON.stringify({ id: "taxtx_" + p.calculation.split("_")[1], reference: p.reference }));
     }
     if (url === "https://api.stripe.com/v1/checkout/sessions") {
       const p = Object.fromEntries(new URLSearchParams(init.body));
@@ -235,6 +250,35 @@ export async function run() {
     await settle();
     out.emailOff.noMails = calls.filter((c) => c.email).length === mailsOff;
     env.RESEND_API_KEY = savedKey;
+    // sales tax (Stripe Tax): quote, order totals, what each provider is asked to charge, the filing transaction
+    const taxItems = [{ id: "p-hydrate", qty: 2 }];
+    const q = await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
+    out.taxQuote = { status: q.status, ...q.data, expectedTax: Math.round((q.data.subtotal + q.data.shipping) * 0.07), addsUp: q.data.total === q.data.subtotal + q.data.shipping + q.data.tax };
+    out.taxQuoteBadAddress = (await call("POST", "/api/checkout/quote", { address: Object.assign({}, address, { zip: "00000" }), shippingMethod: "standard", items: taxItems })).status;
+    const calcCallsBefore = calls.filter((c) => c.taxCalc).length;
+    await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
+    out.taxCached = calls.filter((c) => c.taxCalc).length === calcCallsBefore;   // same basket + address: no second calculation bought
+    const tx = await call("POST", "/api/checkout", { email: "tax@example.com", address, shippingMethod: "standard", provider: "stripe", items: taxItems });
+    const orderTax = db.orders[db.orders.length - 1], stripeTaxParams = calls.filter((c) => c.stripe).pop().stripe;
+    out.taxOrder = { status: tx.status, tax: orderTax.tax, total: orderTax.total, addsUp: orderTax.total === orderTax.subtotal + orderTax.shipping + orderTax.tax, calculation: orderTax.tax_calculation,
+      stripeChargesTax: Object.keys(stripeTaxParams).some((k) => /line_items\[\d+\]\[price_data\]\[product_data\]\[name\]/.test(k) && stripeTaxParams[k] === "Sales tax"),
+      stripeTotal: [0, 1, 2].reduce((sum, i) => sum + (Number(stripeTaxParams[`line_items[${i}][price_data][unit_amount]`] || 0) * Number(stripeTaxParams[`line_items[${i}][quantity]`] || 0)), 0) };
+    fake.stripePaid = true;
+    await call("GET", `/api/orders/${orderTax.id}?key=${orderTax.access_key}`);
+    await settle();
+    const txCall = calls.filter((c) => c.taxTx).pop();
+    out.taxTransaction = { recorded: !!txCall, calculation: txCall && txCall.taxTx.calculation, reference: txCall && txCall.taxTx.reference, stored: orderTax.tax_transaction };
+    fake.stripePaid = false;
+    // PayPal gets the same tax in its breakdown
+    const pt = await call("POST", "/api/checkout", { email: "tax2@example.com", address, shippingMethod: "standard", provider: "paypal", items: taxItems });
+    const ppTax = calls.filter((c) => c.paypal).pop().paypal.purchase_units[0].amount;
+    out.taxPaypal = { status: pt.status, taxTotal: ppTax.breakdown.tax_total.value, total: ppTax.value };
+    // no Stripe key at all: no calculation, no tax, checkout still works
+    const savedSkTax = env.STRIPE_SECRET_KEY; env.STRIPE_SECRET_KEY = "";
+    const calcsBeforeNoKey = calls.filter((c) => c.taxCalc).length;
+    const zt = await call("POST", "/api/checkout", { email: "tax3@example.com", address, shippingMethod: "standard", provider: "paypal", items: taxItems });
+    out.taxNoKey = { status: zt.status, tax: db.orders[db.orders.length - 1].tax, calls: calls.filter((c) => c.taxCalc).length - calcsBeforeNoKey };
+    env.STRIPE_SECRET_KEY = savedSkTax;
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });

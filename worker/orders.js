@@ -16,6 +16,9 @@
               recipient name the customer's bank will show); Zelle has no merchant API, so it is manual only
      test     admin accounts only: completes an order without charging, to rehearse fulfilment
      RESEND_API_KEY (secret) + EMAIL_FROM (var)  order e-mails through worker/email.js (skipped when absent)
+   Sales tax is Stripe Tax (D38): the Worker calculates it server-side for every payment method with the Tax
+   Calculations API, so the total is the same wherever the customer pays, then records a Tax Transaction when the
+   order is paid so it shows up in Stripe's filing reports. No registration in the customer's state = zero tax.
    "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
    "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden. */
 import { HttpError, json, error, noContent, guard, readJson, str, normEmail, validEmail, now, ip, randomToken, hmacHex, timingEqual, enc, money } from "./lib.js";
@@ -33,7 +36,10 @@ const weightOz = (items) => items.reduce((oz, l) => oz + l.qty * (WEIGHT_OZ[l.ty
 const US_STATES = "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" ");
 const STATUSES = ["pending_payment", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
 const ADMIN_TARGETS = ["paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
-const MAX_QTY = 10, MAX_LINES = 30, TAX_CENTS = 0;   // TODO(tax): sales tax once the founder decides how to handle it
+const MAX_QTY = 10, MAX_LINES = 30;
+// Stripe product tax codes: what we sell, and shipping. Stripe decides taxability per state from these.
+const TAX_CODE_ITEMS = "txcd_32040001";      // Dietary Supplements
+const TAX_CODE_SHIPPING = "txcd_92010001";   // Shipping
 const siteUrl = (env, url) => (env.SITE_URL || url.origin).replace(/\/$/, "");
 const orderNumber = (o) => `BW-${o.number}`;
 
@@ -169,6 +175,7 @@ async function stripeCreateSession(env, order, lines, base, restrict = true) {
   };
   lines.forEach((l) => add(l.name, l.description, l.unit, l.qty));
   if (order.shipping > 0) add(`Shipping — ${SHIPPING_METHODS[order.shipping_method].label}`, SHIPPING_METHODS[order.shipping_method].eta, order.shipping, 1);
+  if (order.tax > 0) add("Sales tax", "Calculated for your delivery address", order.tax, 1);   // we calculate tax ourselves (Stripe Tax API), so Checkout just charges it
   const res = await fetch("https://api.stripe.com/v1/checkout/sessions", { method: "POST", body: stripeForm(params),
     headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded", "Idempotency-Key": `order-${order.id}${only ? `-${only}` : ""}` } });
   if (!res.ok && only) {   // that payment method isn't switched on in the Stripe dashboard yet: fall back to the dynamic page rather than fail the order
@@ -193,6 +200,52 @@ async function stripeVerify(env, request, raw) {   // Stripe-Signature: t=…,v1
   const expected = enc.encode(await hmacHex(env.STRIPE_WEBHOOK_SECRET, `${parts.t}.${raw}`));
   return parts.v1.some((sig) => timingEqual(enc.encode(sig), expected));
 }
+/* Sales tax — Stripe Tax, calculated here so every payment method charges the same total (D38).
+   A calculation is valid for 90 days; we keep its id on the order and turn it into a Tax Transaction once the order is
+   paid, which is what Stripe's tax reports and filing use. Stripe returns zero tax wherever the shop isn't registered,
+   so this is a no-op until the founder adds a registration (and an outright no-op without a Stripe key). */
+const taxCache = new Map();   // per-isolate: address+basket -> calculation, so retyping a ZIP doesn't buy another calculation
+const TAX_CACHE_TTL = 600;
+async function taxCalculate(env, lines, shippingCents, address) {
+  if (!env.STRIPE_SECRET_KEY) return { tax: 0, calculation: null };
+  const key = JSON.stringify([address.line1, address.city, address.state, address.zip, shippingCents, lines.map((l) => [l.id, l.unit, l.qty])]);
+  const hit = taxCache.get(key);
+  if (hit && hit.at > now() - TAX_CACHE_TTL) return hit.value;
+  const params = { currency: "usd", "customer_details[address][line1]": address.line1, "customer_details[address][city]": address.city,
+    "customer_details[address][state]": address.state, "customer_details[address][postal_code]": address.zip,
+    "customer_details[address][country]": "US", "customer_details[address_source]": "shipping",
+    "shipping_cost[amount]": shippingCents, "shipping_cost[tax_code]": TAX_CODE_SHIPPING };
+  lines.forEach((l, i) => {
+    params[`line_items[${i}][amount]`] = l.unit * l.qty;
+    params[`line_items[${i}][quantity]`] = l.qty;
+    params[`line_items[${i}][reference]`] = `L${i + 1}`;
+    params[`line_items[${i}][tax_code]`] = TAX_CODE_ITEMS;
+  });
+  const res = await fetch("https://api.stripe.com/v1/tax/calculations", { method: "POST", body: stripeForm(params),
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" } });
+  if (!res.ok) {
+    const text = await res.text();
+    if (text.includes("customer_tax_location_invalid")) throw new HttpError(400, "We couldn't find that address — please check the street, city, state and ZIP.");
+    console.error("tax calculate", res.status, text.slice(0, 300));
+    return { tax: 0, calculation: null };   // never block a sale on the tax service
+  }
+  const c = await res.json(), value = { tax: c.tax_amount_exclusive || 0, calculation: c.id };
+  taxCache.set(key, { at: now(), value });
+  if (taxCache.size > 200) taxCache.delete(taxCache.keys().next().value);
+  return value;
+}
+async function taxRecord(env, order) {   // after payment: the transaction Stripe files from
+  if (!env.STRIPE_SECRET_KEY || !order.tax_calculation || order.tax_transaction) return null;
+  const res = await fetch("https://api.stripe.com/v1/tax/transactions/create_from_calculation", { method: "POST",
+    body: stripeForm({ calculation: order.tax_calculation, reference: orderNumber(order) }),
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" } });
+  if (!res.ok) { console.error("tax transaction", res.status, (await res.text()).slice(0, 300)); return null; }
+  const t = await res.json();
+  await env.DB.prepare("UPDATE orders SET tax_transaction = ? WHERE id = ?").bind(t.id, order.id).run();
+  order.tax_transaction = t.id;
+  return t.id;
+}
+
 // PayPal: Orders API v2 — create (approve redirect) then capture on return.
 const paypalBase = (env) => (env.PAYPAL_ENV === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com");
 async function paypalToken(env) {
@@ -248,6 +301,7 @@ async function markPaid(env, ctx, order, paymentRef, actor, base) {
     env.DB.prepare("INSERT INTO order_events (order_id, at, actor, type, detail) VALUES (?, ?, ?, 'paid', ?)").bind(order.id, t, actor, paymentRef ? `Payment ${paymentRef}` : null)
   ]);
   Object.assign(order, { status: "paid", payment_ref: paymentRef, paid_at: t, updated_at: t });
+  ctx.waitUntil(taxRecord(env, order).catch((e) => console.error("taxRecord", order.id, e && e.message)));
   ctx.waitUntil(notify(env, order, "paid", base));
   ctx.waitUntil(notifyOwner(env, order, base));
   return order;
@@ -306,9 +360,22 @@ const eventsFor = async (env, id) => (await env.DB.prepare("SELECT * FROM order_
 /* ---------- customer handlers ---------- */
 export const checkoutConfig = guard(async (request, env) => {
   const s = await currentSession(env, request), user = s && s.user;
-  return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, taxNote: "Sales tax is not applied yet.",
+  return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, tax: !!env.STRIPE_SECRET_KEY,
     methods: Object.entries(SHIPPING_METHODS).map(([id, m]) => ({ id, label: m.label, eta: m.eta, carrier: m.carrier || "", rate: m.rate, freeOver: m.freeOver || 0 })),
     user: user ? { email: user.email, name: user.name } : null });
+});
+
+// Live total for the checkout page: the same maths as checkout(), without creating anything.
+export const checkoutQuote = guard(async (request, env) => {
+  const body = await readJson(request);
+  await assertRate(env, "quote:ip", ip(request));
+  await recordAttempt(env, "quote:ip", ip(request));
+  const address = checkAddress(body.address);
+  const lines = await priceLines(env, body.items);
+  const subtotal = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
+  const ship = shippingFor(str(body.shippingMethod, 20), subtotal);
+  const { tax } = await taxCalculate(env, lines, ship.cents, address);
+  return json({ ok: true, subtotal, shipping: ship.cents, tax, total: subtotal + ship.cents + tax });
 });
 
 export const checkout = guard(async (request, env, ctx, url) => {
@@ -321,13 +388,14 @@ export const checkout = guard(async (request, env, ctx, url) => {
   const lines = await priceLines(env, body.items);
   const subtotal = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
   const ship = shippingFor(str(body.shippingMethod, 20), subtotal);
-  const total = subtotal + ship.cents + TAX_CENTS;
+  const { tax, calculation } = await taxCalculate(env, lines, ship.cents, address);
+  const total = subtotal + ship.cents + tax;
   const provider = str(body.provider, 10), modes = providerModes(env, user), mode = modes[provider];
   if (!mode) throw new HttpError(provider === "test" ? 403 : provider in modes ? 503 : 400, PROVIDER_OFF[provider] || "Choose a payment method.");
   const id = crypto.randomUUID(), key = randomToken(), t = now();
-  await env.DB.prepare(`INSERT INTO orders (id, number, access_key, user_id, email, status, provider, currency, subtotal, shipping, tax, total, shipping_method, address, items, created_at, updated_at)
-    VALUES (?, (SELECT COALESCE(MAX(number), 1000) + 1 FROM orders), ?, ?, ?, 'pending_payment', ?, 'usd', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, key, user ? user.id : null, email, provider, subtotal, ship.cents, TAX_CENTS, total, ship.id, JSON.stringify(address), JSON.stringify(lines), t, t).run();
+  await env.DB.prepare(`INSERT INTO orders (id, number, access_key, user_id, email, status, provider, currency, subtotal, shipping, tax, total, shipping_method, address, items, tax_calculation, created_at, updated_at)
+    VALUES (?, (SELECT COALESCE(MAX(number), 1000) + 1 FROM orders), ?, ?, ?, 'pending_payment', ?, 'usd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, key, user ? user.id : null, email, provider, subtotal, ship.cents, tax, total, ship.id, JSON.stringify(address), JSON.stringify(lines), calculation, t, t).run();
   const order = await loadOrder(env, id);
   await addEvent(env, id, user ? "customer" : "guest", "created", `${lines.length} line(s), ${provider}`);
   try {

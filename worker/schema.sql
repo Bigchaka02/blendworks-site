@@ -79,3 +79,7 @@ CREATE TABLE IF NOT EXISTS email_tokens (   -- single-use links sent by e-mail; 
   created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens (user_id, kind);
+
+-- 2026-09-26: Stripe Tax (applied)
+ALTER TABLE orders ADD COLUMN tax_calculation TEXT;    -- Stripe Tax calculation id (valid 90 days, made at checkout)
+ALTER TABLE orders ADD COLUMN tax_transaction TEXT;    -- Stripe Tax transaction id, created once the order is paid (filing record)

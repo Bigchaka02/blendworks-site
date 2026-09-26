@@ -2,8 +2,9 @@
    follow the provider's redirect (Stripe Checkout — also for Apple Pay / Google Pay / Cash App Pay —, PayPal, Venmo,
    the admin-only test payment) or land on the order page with pay-in-your-app instructions (Zelle, manual
    Cash App / Venmo). Prices shown here are a preview — the Worker recomputes everything from the catalog and the
-   builder tables (worker/orders.js). Keeps the last address in localStorage (bw_address_v1) and the order being
-   paid in bw_pending_order. */
+   builder tables (worker/orders.js). Sales tax comes from the Worker (Stripe Tax): as soon as the address is complete
+   the page asks /api/checkout/quote for the real total, so nothing changes on the provider's page. Keeps the last
+   address in localStorage (bw_address_v1) and the order being paid in bw_pending_order. */
 (function () {
   const { $, $$ } = BW;
   const KEY_ADDR = "bw_address_v1", KEY_PENDING = "bw_pending_order";
@@ -50,10 +51,11 @@
     // shipping methods + providers
     const subtotal = lines.reduce((s, l) => s + Math.round(l.product.price * 100) * l.qty, 0);
     const modes = cfg.modes || {};
-    const state = { method: cfg.methods[0].id, provider: PROVIDER_ORDER.concat(["test"]).find((p) => usable(modes, p)) || "" };
+    const state = { method: cfg.methods[0].id, provider: PROVIDER_ORDER.concat(["test"]).find((p) => usable(modes, p)) || "", tax: null };
+    const cartItems = () => lines.map((l) => ({ id: l.id, qty: l.qty, custom: l.product.custom ? { name: l.product.name, spec: l.product.custom } : undefined }));
     const methodCost = (m) => (m.freeOver && subtotal >= m.freeOver ? 0 : m.rate);
     $("[data-co-methods]").innerHTML = cfg.methods.map((m) =>
-      `<label class="choice${m.id === state.method ? " is-active" : ""}"><input type="radio" name="method" value="${m.id}"${m.id === state.method ? " checked" : ""}><span><b>${m.label}</b><span>${m.eta}${m.freeOver ? ` · free over ${dollars(m.freeOver)}` : ""}</span></span><span class="price num">${methodCost(m) ? dollars(methodCost(m)) : "Free"}</span></label>`).join("");
+      `<label class="choice${m.id === state.method ? " is-active" : ""}"><input type="radio" name="method" value="${m.id}"${m.id === state.method ? " checked" : ""}><span><b>${m.label}</b><span>${m.eta}${m.carrier ? ` · ${m.carrier}` : ""}${m.freeOver ? ` · free over ${dollars(m.freeOver)}` : ""}</span></span><span class="price num">${methodCost(m) ? dollars(methodCost(m)) : "Free"}</span></label>`).join("");
     const providerRow = (id) => {
       const c = PROVIDER_COPY[id], mode = modes[id], on = usable(modes, id), why = on ? c[mode] || c.api : mode ? c.unsupported : c.off;
       return `<label class="choice${on ? "" : " is-disabled"}${id === state.provider ? " is-active" : ""}"><input type="radio" name="provider" value="${id}"${on ? "" : " disabled"}${id === state.provider ? " checked" : ""}><span><b>${c.title}</b><span>${why}</span></span></label>`;
@@ -65,7 +67,7 @@
     }
     const setActive = (name) => $$(`input[name=${name}]`, form).forEach((i) => i.closest(".choice").classList.toggle("is-active", i.checked));
     form.addEventListener("change", (e) => {
-      if (e.target.name === "method") { state.method = e.target.value; setActive("method"); renderSummary(); }
+      if (e.target.name === "method") { state.method = e.target.value; setActive("method"); renderSummary(); quote(); }
       if (e.target.name === "provider") { state.provider = e.target.value; setActive("provider"); renderSummary(); }
     });
 
@@ -74,10 +76,35 @@
       $("[data-co-items]").innerHTML = lines.map((l) => `<div class="line"><span>${l.qty} × ${BW.escapeHtml(l.product.name)}</span><span class="num">${BW.formatPrice(l.lineTotal)}</span></div>`).join("");
       $("[data-co-subtotal]").textContent = dollars(subtotal);
       $("[data-co-shipping]").textContent = ship ? dollars(ship) : "Free";
-      $("[data-co-total]").textContent = dollars(subtotal + ship);
+      $("[data-co-tax]").textContent = state.tax === null ? (cfg.tax ? "Add your address" : "—") : state.tax ? dollars(state.tax) : "None";
+      $("[data-co-total]").textContent = dollars(subtotal + ship + (state.tax || 0));
       $("[data-co-submit]").textContent = SUBMIT[`${state.provider}:${modes[state.provider]}`] || SUBMIT[state.provider] || "Continue to payment";
     }
+
+    // Sales tax depends on where it ships, so ask the Worker once the address is complete (and again if it changes).
+    const addressNow = () => Object.fromEntries(["name", "line1", "line2", "city", "state", "zip"].map((k) => [k, $(`#co-${k}`).value.trim()]));
+    const addressReady = (a) => a.line1.length > 2 && a.city.length > 1 && a.state && /^\d{5}(-\d{4})?$/.test(a.zip);
+    let quoteKey = "", quoteTimer;
+    async function quote() {
+      const address = addressNow();
+      if (!cfg.tax || !addressReady(address)) { state.tax = null; renderSummary(); return; }
+      const key = JSON.stringify([address.line1, address.city, address.state, address.zip, state.method]);
+      if (key === quoteKey) return;
+      quoteKey = key;
+      $("[data-co-tax]").textContent = "Calculating…";
+      try {
+        const r = await BW.auth.api("/api/checkout/quote", { method: "POST", body: { address, shippingMethod: state.method, items: cartItems() } });
+        if (key !== quoteKey) return;   // the address moved on while we waited
+        state.tax = r.tax;
+      } catch (e) {
+        state.tax = 0;   // a tax service wobble must never block the order; the Worker recomputes it at checkout anyway
+      }
+      renderSummary();
+    }
+    const quoteSoon = () => { clearTimeout(quoteTimer); quoteTimer = setTimeout(quote, 600); };
+    ["line1", "city", "state", "zip"].forEach((k) => { $(`#co-${k}`).addEventListener("input", quoteSoon); $(`#co-${k}`).addEventListener("change", quoteSoon); });
     renderSummary();
+    quote();
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -91,8 +118,7 @@
       const label = btn.textContent;
       btn.textContent = "Starting secure payment…";
       try {
-        const payload = { email: fd.get("email"), address, shippingMethod: state.method, provider: state.provider,
-          items: lines.map((l) => ({ id: l.id, qty: l.qty, custom: l.product.custom ? { name: l.product.name, spec: l.product.custom } : undefined })) };
+        const payload = { email: fd.get("email"), address, shippingMethod: state.method, provider: state.provider, items: cartItems() };
         const r = await BW.auth.api("/api/checkout", { method: "POST", body: payload });
         try { localStorage.setItem(KEY_PENDING, r.orderId); } catch (x) { /* storage blocked */ }
         location.href = r.url;

@@ -7,7 +7,8 @@
      POST   /api/auth/signup | login | logout | logout-all | forgot | reset | verify
      GET/PATCH/DELETE /api/me       POST /api/me/password           POST /api/me/verify   (re-send the verification mail)
      GET/POST /api/blends           DELETE /api/blends/:id          POST /api/contact
-     GET    /api/checkout/config    POST /api/checkout               (starts payment; returns the redirect URL)
+     GET    /api/checkout/config    POST /api/checkout/quote         (live total incl. sales tax for an address)
+     POST   /api/checkout                                             (starts payment; returns the redirect URL)
      GET    /api/orders             GET  /api/orders/:id?key=…      (owner, admin, or the access key from the order link)
      POST   /api/orders/:id/reported?key=…                            ("I've sent the payment" on manual methods)
      POST   /api/webhooks/stripe
@@ -58,6 +59,7 @@ async function route(request, env, ctx, url) {
   if (m("GET", "/api/blends")) return auth.listBlends(request, env);
   if (m("POST", "/api/blends")) return auth.saveBlend(request, env);
   if (m("GET", "/api/checkout/config")) return orders.checkoutConfig(request, env);
+  if (m("POST", "/api/checkout/quote")) return orders.checkoutQuote(request, env);
   if (m("POST", "/api/checkout")) return orders.checkout(request, env, ctx, url);
   if (m("GET", "/api/orders")) return orders.listOrders(request, env);
   if (m("GET", "/api/admin/orders")) return orders.adminOrders(request, env, ctx, url);
