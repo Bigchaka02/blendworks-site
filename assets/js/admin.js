@@ -1,5 +1,6 @@
-/* Fulfilment console (/admin, accounts with role = admin): list and search orders, open one, add tracking, move it
-   through paid → processing → shipped → delivered (or cancelled / refunded), leave notes. Talks to /api/admin/*.
+/* Fulfilment console (/admin, accounts with role = admin): list and search orders, open one, print its packing slip,
+   copy the address, export the visible orders as a shipping spreadsheet (Pirate Ship), add tracking, and move the order
+   through paid → processing → shipped → delivered (or cancelled / refunded), leaving notes. Talks to /api/admin/*.
    Reuses BW.orderBadge / orderItems / orderAddress from order.js. */
 (function () {
   const { $, $$ } = BW;
@@ -8,6 +9,21 @@
   const FILTERS = [["", "All"], ["paid", "Paid — to blend"], ["processing", "Blending"], ["shipped", "Shipped"], ["delivered", "Delivered"], ["pending_payment", "Awaiting payment"], ["cancelled", "Cancelled"], ["refunded", "Refunded"]];
   const ACTIONS = { paid: ["processing", "cancelled"], processing: ["shipped", "cancelled"], shipped: ["delivered", "refunded"], delivered: ["refunded"], pending_payment: ["paid", "cancelled"], cancelled: ["paid"], refunded: [] };
   const VERB = { paid: "Mark paid (manual)", processing: "Start blending", shipped: "Mark shipped", delivered: "Mark delivered", cancelled: "Cancel order", refunded: "Mark refunded" };
+  const addressText = (a) => [a.name, a.line1, a.line2, `${a.city}, ${a.state} ${a.zip}`].filter(Boolean).join("\n");
+  // Pirate Ship (and every other label tool) imports a spreadsheet and asks you to map the columns once — plain headers.
+  const CSV_COLS = [["Order", (o) => o.number], ["Name", (o) => o.address.name], ["Address Line 1", (o) => o.address.line1], ["Address Line 2", (o) => o.address.line2 || ""],
+    ["City", (o) => o.address.city], ["State", (o) => o.address.state], ["Zip", (o) => o.address.zip], ["Country", (o) => o.address.country || "US"],
+    ["Email", (o) => o.email], ["Phone", (o) => o.address.phone || ""], ["Weight (oz)", (o) => o.weightOz], ["Contents", (o) => o.items.join("; ")]];
+  const csvCell = (v) => { const s = String(v == null ? "" : v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  function exportCsv(orders) {
+    if (!orders.length) { BW.toast("Nothing to export in this view."); return; }
+    const rows = [CSV_COLS.map((c) => c[0]).join(",")].concat(orders.map((o) => CSV_COLS.map((c) => csvCell(c[1](o))).join(",")));
+    const url = URL.createObjectURL(new Blob(["\ufeff" + rows.join("\r\n")], { type: "text/csv;charset=utf-8" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: `blendworks-labels-${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    BW.toast(`${orders.length} order${orders.length > 1 ? "s" : ""} exported — upload the file to Pirate Ship.`);
+  }
 
   document.addEventListener("bw:ready", () => {
     const root = $("[data-admin]");
@@ -48,7 +64,8 @@
         <p class="muted small">${BW.providerName(o.provider)}${o.paymentInfo && o.paymentInfo.wallet ? ` · paid with ${BW.walletName(o.paymentInfo.wallet)}` : ""}${o.paymentRef ? ` · payment ${BW.escapeHtml(o.paymentRef)}` : ""}${o.providerRef ? ` · ref ${BW.escapeHtml(o.providerRef)}` : ""}<br>Placed ${when(o.createdAt)}${o.paidAt ? ` · paid ${when(o.paidAt)}` : ""}</p>
         ${o.paymentInfo && o.paymentInfo.mode === "manual" ? `<div class="notice mb-1">Manual ${BW.providerName(o.paymentInfo.provider)} payment: expect <b>${dollars(o.paymentInfo.amount)}</b> with memo <b>${BW.escapeHtml(o.paymentInfo.memo)}</b> ${o.paymentInfo.handle ? `to ${BW.escapeHtml(o.paymentInfo.handle)}${o.paymentInfo.name ? ` (${BW.escapeHtml(o.paymentInfo.name)})` : ""}` : ""}. ${o.reportedAt ? `Customer reported sending it ${when(o.reportedAt)}.` : "Not reported by the customer yet."} Check your app, then <b>Mark paid</b>.</div>` : ""}
         ${o.paymentInfo && o.paymentInfo.mode === "api" && o.paymentInfo.status ? `<p class="muted small">Provider status: ${BW.escapeHtml(o.paymentInfo.status)}</p>` : ""}
-        <div class="row gap-sm mb-1" data-admin-actions>${(ACTIONS[o.status] || []).map((s) => `<button class="btn btn-sm ${s === "cancelled" || s === "refunded" ? "btn-danger" : "btn-primary"}" data-set-status="${s}">${VERB[s]}</button>`).join("")}<a class="btn btn-ghost btn-sm" href="/order?id=${o.id}" target="_blank" rel="noopener">Customer view</a></div>
+        <div class="row gap-sm mb-1" data-admin-actions>${(ACTIONS[o.status] || []).map((s) => `<button class="btn btn-sm ${s === "cancelled" || s === "refunded" ? "btn-danger" : "btn-primary"}" data-set-status="${s}">${VERB[s]}</button>`).join("")}</div>
+        <div class="row gap-sm mb-1"><a class="btn btn-secondary btn-sm" href="/packing-slip?id=${o.id}&amp;print=1" target="_blank" rel="noopener">Print packing slip</a><button class="btn btn-secondary btn-sm" data-copy-address>Copy address</button><a class="btn btn-ghost btn-sm" href="/order?id=${o.id}" target="_blank" rel="noopener">Customer view</a></div>
         <div class="form-error mb-1" data-error hidden></div>
         <h3 class="small-h">Ship to</h3><p class="addr">${BW.orderAddress(o.address)}</p><p class="muted small">${BW.escapeHtml(o.email)} · ${o.shippingMethod.label} (${o.shippingMethod.eta})</p>
         <h3 class="small-h">Items</h3><div class="order-items mb-1">${BW.orderItems(o)}</div>
@@ -71,6 +88,11 @@
           await load(); await open(id);
         } catch (e) { err.textContent = e.message; err.hidden = false; }
       };
+      $("[data-copy-address]", box).addEventListener("click", async (e) => {
+        const text = addressText(o.address);
+        try { await navigator.clipboard.writeText(text); BW.toast("Address copied — paste it into the label."); }
+        catch (err) { window.prompt("Copy the address:", text.replace(/\n/g, ", ")); }
+      });
       $$("[data-set-status]", box).forEach((b) => b.addEventListener("click", () => {
         const s = b.dataset.setStatus;
         if ((s === "cancelled" || s === "refunded") && !confirm(`${VERB[s]} for ${o.number}?`)) return;
@@ -89,6 +111,7 @@
       if (f) { state.filter = f.dataset.filter; load(); }
       else if (row) open(row.dataset.id);
       else if (e.target.closest("[data-admin-refresh]")) load();
+      else if (e.target.closest("[data-admin-export]")) exportCsv(state.orders);
     });
     let timer;
     $("[data-admin-q]").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); load(); }, 250); });

@@ -20,12 +20,16 @@
    "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden. */
 import { HttpError, json, error, noContent, guard, readJson, str, normEmail, validEmail, now, ip, randomToken, hmacHex, timingEqual, enc, money } from "./lib.js";
 import { currentSession, requireUser, requireAdmin, checkSpecShape, assertRate, recordAttempt } from "./auth.js";
-import { sendEmail, esc, layout } from "./email.js";
+import { sendEmail, esc, layout, button } from "./email.js";
 
-export const SHIPPING_METHODS = {   // PLACEHOLDER rates (founder to-do); cents
-  standard: { label: "Standard", eta: "3–5 business days", rate: 595, freeOver: 5000 },
-  express: { label: "Express", eta: "1–2 business days", rate: 1495 }
+// Flat rates the customer pays; the founder buys the matching USPS label on Pirate Ship (D37). Cents.
+export const SHIPPING_METHODS = {
+  standard: { label: "Standard", eta: "3–5 business days", carrier: "USPS Ground Advantage", rate: 595, freeOver: 5000 },
+  express: { label: "Priority", eta: "1–3 business days", carrier: "USPS Priority Mail", rate: 1495 }
 };
+// PLACEHOLDER packing weights (Q14) — only used to prefill the shipping spreadsheet, never to price anything.
+const WEIGHT_OZ = { capsule: 6, powder: 20, box: 4 };
+const weightOz = (items) => items.reduce((oz, l) => oz + l.qty * (WEIGHT_OZ[l.type] || WEIGHT_OZ.capsule), WEIGHT_OZ.box);
 const US_STATES = "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(" ");
 const STATUSES = ["pending_payment", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
 const ADMIN_TARGETS = ["paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
@@ -245,6 +249,7 @@ async function markPaid(env, ctx, order, paymentRef, actor, base) {
   ]);
   Object.assign(order, { status: "paid", payment_ref: paymentRef, paid_at: t, updated_at: t });
   ctx.waitUntil(notify(env, order, "paid", base));
+  ctx.waitUntil(notifyOwner(env, order, base));
   return order;
 }
 async function cancelPending(env, order, detail) {
@@ -287,7 +292,8 @@ function orderView(o, events, admin) {
   return {
     id: o.id, number: orderNumber(o), status: o.status, provider: o.provider, email: o.email,
     items: parse(o.items, []), amounts: { subtotal: o.subtotal, shipping: o.shipping, tax: o.tax, total: o.total, currency: o.currency },
-    shippingMethod: { id: o.shipping_method, label: m.label || o.shipping_method, eta: m.eta || "" },
+    shippingMethod: { id: o.shipping_method, label: m.label || o.shipping_method, eta: m.eta || "", carrier: m.carrier || "" },
+    weightOz: weightOz(parse(o.items, [])),
     address: parse(o.address, {}), tracking: parse(o.tracking, null), note: admin ? o.note : undefined,
     paymentInfo: parse(o.payment_info, null), reportedAt: reported ? reported.at : null,
     createdAt: o.created_at, paidAt: o.paid_at, shippedAt: o.shipped_at, deliveredAt: o.delivered_at, updatedAt: o.updated_at,
@@ -301,7 +307,7 @@ const eventsFor = async (env, id) => (await env.DB.prepare("SELECT * FROM order_
 export const checkoutConfig = guard(async (request, env) => {
   const s = await currentSession(env, request), user = s && s.user;
   return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, taxNote: "Sales tax is not applied yet.",
-    methods: Object.entries(SHIPPING_METHODS).map(([id, m]) => ({ id, label: m.label, eta: m.eta, rate: m.rate, freeOver: m.freeOver || 0 })),
+    methods: Object.entries(SHIPPING_METHODS).map(([id, m]) => ({ id, label: m.label, eta: m.eta, carrier: m.carrier || "", rate: m.rate, freeOver: m.freeOver || 0 })),
     user: user ? { email: user.email, name: user.name } : null });
 });
 
@@ -396,7 +402,11 @@ export const adminOrders = guard(async (request, env, ctx, url) => {
     .bind(status, status, q, `%${q}%`, q.replace(/^bw-/, "")).all();
   const counts = (await env.DB.prepare("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").all()).results;
   return json({ ok: true, counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
-    orders: rows.results.map((o) => ({ id: o.id, number: orderNumber(o), email: o.email, status: o.status, provider: o.provider, manual: o.provider_ref === "manual", reportedAt: o.reported_at || null, total: o.total, createdAt: o.created_at, city: parse(o.address, {}).city, state: parse(o.address, {}).state, items: parse(o.items, []).map((l) => `${l.qty} × ${l.name}`) })) });
+    orders: rows.results.map((o) => {
+      const items = parse(o.items, []), address = parse(o.address, {});
+      return { id: o.id, number: orderNumber(o), key: o.access_key, email: o.email, status: o.status, provider: o.provider, manual: o.provider_ref === "manual", reportedAt: o.reported_at || null,
+        total: o.total, createdAt: o.created_at, city: address.city, state: address.state, address, weightOz: weightOz(items), tracking: parse(o.tracking, null), items: items.map((l) => `${l.qty} × ${l.name}`) };
+    }) });
 });
 
 export const adminOrder = guard(async (request, env, ctx, id) => {
@@ -438,6 +448,22 @@ export const adminUpdateOrder = guard(async (request, env, ctx, id, url) => {
 });
 
 /* ---------- order e-mails (worker/email.js; skipped until RESEND_API_KEY exists) ---------- */
+const slipUrl = (order, base) => `${base}/packing-slip?id=${order.id}&key=${order.access_key}`;
+// The shop's own "there's an order" e-mail: what to pack, where it goes, and the two links that start the work.
+async function notifyOwner(env, order, base) {
+  const to = env.CONTACT_EMAIL || (env.EMAIL_FROM || "").replace(/^.*<|>$/g, "");
+  if (!to) return false;
+  const items = parse(order.items, []), a = parse(order.address, {}), m = SHIPPING_METHODS[order.shipping_method] || {};
+  const rows = items.map((l) => `<tr><td style="padding:4px 12px 4px 0"><b>${l.qty} ×</b> ${esc(l.name)}</td><td style="color:#555">${esc(l.description || "")}</td></tr>`).join("");
+  const body = `<p><b>${orderNumber(order)}</b> · $${money(order.total)} · paid with ${esc(order.provider)}</p>
+    <table style="border-collapse:collapse;font-size:14px;margin-bottom:12px">${rows}</table>
+    <p style="margin:0 0 4px"><b>Ship to</b> (${esc(m.label || order.shipping_method)} — ${esc(m.carrier || "")}, about ${weightOz(items)} oz packed)</p>
+    <p style="margin:0 0 16px;white-space:pre-line">${esc([a.name, a.line1, a.line2, `${a.city}, ${a.state} ${a.zip}`, a.phone].filter(Boolean).join("\n"))}</p>
+    ${button(slipUrl(order, base) + "&print=1", "Print the packing slip")}
+    <p style="font-size:13px;color:#555">Then buy the label on Pirate Ship, pack the parcel, and paste the tracking number into <a href="${base}/admin">the fulfilment console</a>.</p>`;
+  return sendEmail(env, to, `New order ${orderNumber(order)} · $${money(order.total)} · ${a.city || ""}, ${a.state || ""}`, layout("You have an order to pack", body, orderNumber(order)));
+}
+
 async function notify(env, order, kind, base) {
   const link = `${base}/order?id=${order.id}&key=${order.access_key}`, items = parse(order.items, []), tr = parse(order.tracking, null);
   const rows = items.map((l) => `<tr><td style="padding:4px 12px 4px 0">${l.qty} × ${esc(l.name)}</td><td style="text-align:right">$${money(l.unit * l.qty)}</td></tr>`).join("");

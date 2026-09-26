@@ -126,6 +126,10 @@ export async function run() {
     fake.stripePaid = true;
     const v2 = await call("GET", `/api/orders/${order.id}?key=${order.access_key}`);
     out.viewPaid = { orderStatus: v2.data.order.status, paymentRef: order.payment_ref, events: v2.data.order.events.map((e) => e.type), emails: calls.filter((c) => c.email).map((c) => c.email) };
+    const owner = calls.filter((c) => c.email && /^New order/.test(c.email)).pop();   // the shop's "there's an order to pack" e-mail
+    out.ownerMail = { subject: owner && owner.email, to: owner && owner.to, slipLink: !!(owner && owner.html.includes(`/packing-slip?id=${order.id}`) && owner.html.includes("print=1")),   // & is HTML-escaped in the link
+      address: !!(owner && owner.html.includes("Louisville, KY 40202")), weight: !!(owner && /\d+ oz packed/.test(owner.html)) };
+    out.weightOz = v2.data.order.weightOz;
     // webhook: signed event for a second (pending) order, then duplicate delivery
     const co2 = await call("POST", "/api/checkout", { email: "b@example.com", address, shippingMethod: "standard", provider: "stripe", items: [{ id: "p-ignite", qty: 1 }] });
     const order2 = db.orders[1], payload = JSON.stringify({ id: "evt_1", type: "checkout.session.completed", data: { object: { id: "cs_test_fake", payment_status: "paid", payment_intent: "pi_wh_2", metadata: { order_id: order2.id } } } });

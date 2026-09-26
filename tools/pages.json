@@ -1,6 +1,6 @@
 {
-  "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'canonical': false = no canonical/og:url (404).",
-  "version": "20260917e",
+  "_comment": "Per-page metadata + script sets for tools/sync_pages.py. 'plugins': splittext | flip (GSAP core, ScrollTrigger and Lenis load everywhere). 'data': extra data files. 'scripts': page scripts after motion.js. 'noindex': adds a robots meta. 'bare': print-only page — no shell, no motion, only its own script. 'canonical': false = no canonical/og:url (404).",
+  "version": "20260926a",
   "site": "https://blendworks.fit",
   "pages": {
     "index": {
@@ -155,6 +155,16 @@
       "title": "Confirm your e-mail — BlendWorks",
       "description": "Confirm the e-mail address on your BlendWorks account.",
       "noindex": true
+    },
+    "packing-slip": {
+      "path": "/packing-slip",
+      "title": "Packing slip — BlendWorks",
+      "description": "Printable packing slip for a BlendWorks order.",
+      "noindex": true,
+      "bare": true,
+      "scripts": [
+        "slip"
+      ]
     }
   }
 }

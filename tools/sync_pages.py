@@ -1,6 +1,7 @@
 """Regenerates the shared <head> and <script> blocks of every page from tools/pages.json.
 
-Each page keeps its own hand-written body; only the regions between
+A page marked "bare" in pages.json (the packing slip) skips the shell: no curtain script, no GSAP/Lenis, no site.js —
+only its own script. Each page keeps its own hand-written body; only the regions between
     <!-- bw:head --> ... <!-- /bw:head -->      and     <!-- bw:scripts --> ... <!-- /bw:scripts -->
 are rewritten. The script also generates assets/js/data/*.js from assets/data/*.json (the catalog and builder data — the order API reads
 the JSON too), writes sitemap.xml, keeps the CSP hash of the inline curtain script in _headers current, and (with --check)
@@ -52,6 +53,13 @@ def head_block(name, page, cfg):
     out.append('<meta name="theme-color" content="#0B1020">')
     if url:
         out.append('<link rel="canonical" href="%s">' % url)
+    if page.get("bare"):   # print-only page: no social tags, no curtain (it must render instantly and plainly)
+        out += ['<link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">',
+                '<link rel="preconnect" href="https://fonts.googleapis.com">',
+                '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+                '<link href="%s" rel="stylesheet">' % FONTS,
+                '<link rel="stylesheet" href="/assets/css/styles.css?v=%s">' % v]
+        return "\n".join(out)
     out += [
         '<meta property="og:type" content="website">',
         '<meta property="og:site_name" content="BlendWorks">',
@@ -76,6 +84,8 @@ def scripts_block(name, page, cfg):
     v = cfg["version"]
     local = lambda p: '<script src="/assets/js/%s?v=%s"></script>' % (p, v)
     cdn = lambda u: '<script src="%s"></script>' % u
+    if page.get("bare"):
+        return "\n".join(["<!-- generated from tools/pages.json by tools/sync_pages.py -->"] + [local("%s.js" % s) for s in page.get("scripts", [])])
     out = ["<!-- generated from tools/pages.json by tools/sync_pages.py -->", local("data/products.js")]
     out += [local("data/%s.js" % d) for d in page.get("data", [])]
     out += [local("cart.js"), cdn(GSAP + "gsap.min.js"), cdn(GSAP + "ScrollTrigger.min.js")]
