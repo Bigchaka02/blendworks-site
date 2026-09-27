@@ -595,7 +595,7 @@ textarea.input { min-height: 140px; resize: vertical; }
 
 /* ---------- 8d. Packing slip (/packing-slip) — always light, built for paper ---------- */
 .slip-page { background: #fff; color: #111; }
-.slip { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.5rem 1rem; font-size: .95rem; line-height: 1.5; }
+.slip { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.5rem 5.5rem; font-size: .95rem; line-height: 1.5; }   /* bottom room for the floating Print bar */
 .slip h2 { font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: #666; margin: 0 0 .35rem; }
 .slip p { margin: 0 0 .5rem; }
 .slip .muted { color: #666; }
