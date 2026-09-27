@@ -3,7 +3,7 @@
 Static, dependency-free storefront with a GSAP motion layer. This folder is the git working copy of the private repo **Bigchaka02/blendworks-site**; every push to `main` deploys to Cloudflare (see `../06-deployment/README.md`).
 
 ## Pages (clean URLs; `.html` is redirected by the host)
-`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (address, shipping, payment) · `/order?id=…&key=…` (confirmation + tracking) · `/signup` · `/login` · `/account` (orders, saved blends, profile, password) · `/admin` (fulfilment console, admins) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html` (served by the host for any unknown path, at any depth)
+`/` home · `/shop` (search, filters, sort, quantity, add to cart) · `/product?id=<slug>` · `/build?step=1|2|3` (Build your own) · `/cart` · `/checkout` (address, shipping, payment) · `/order?id=…&key=…` (confirmation + tracking) · `/signup` · `/login` · `/account` (orders, saved blends, profile, password) · `/verify?token=` · `/reset?token=` · `/admin` (fulfilment console, admins) · `/packing-slip?id=…&key=…` (print view) · `/about` · `/mission` · `/contact` (+FAQ) · `/terms` · `/privacy` · `404.html` (served by the host for any unknown path, at any depth)
 
 ## Structure
 ```
@@ -12,7 +12,8 @@ index.html … 404.html            pages: hand-written <body>; the <head> and <s
 tools/pages.json                 per-page title, description, robots, data files, GSAP plugins, page scripts, ?v= version
 tools/sync_pages.py              regenerates the marked blocks, sitemap.xml and the CSP hash; --bump / --check
 worker/index.js                  the API router (Cloudflare Worker) behind /api/* — route table at its top
-worker/auth.js  worker/orders.js accounts + saved blends / checkout, payments, orders, fulfilment, e-mails
+worker/auth.js  worker/orders.js accounts, sessions, e-mailed tokens / checkout, payments, tax, fulfilment, returns
+worker/email.js                  Resend sender + the contact-form handler
 worker/lib.js  worker/schema.sql shared helpers / D1 database "blendworks" schema (already applied)
 assets/data/products.json        SOURCE of the catalog (PLACEHOLDER) — the pages and the order API both read it
 assets/data/ingredients.json     SOURCE of the builder data (PLACEHOLDER): ingredients, sizes, pricing formula
