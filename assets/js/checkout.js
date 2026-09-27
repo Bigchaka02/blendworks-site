@@ -2,8 +2,8 @@
    follow the provider's redirect (Stripe Checkout — also for Apple Pay / Google Pay / Cash App Pay —, PayPal, Venmo,
    the admin-only test payment) or land on the order page with pay-in-your-app instructions (Zelle, manual
    Cash App / Venmo). Prices shown here are a preview — the Worker recomputes everything from the catalog and the
-   builder tables (worker/orders.js). Sales tax comes from the Worker (Stripe Tax): as soon as the address is complete
-   the page asks /api/checkout/quote for the real total, so nothing changes on the provider's page. Keeps the last
+   builder tables (worker/orders.js). Sales tax comes from the Worker (Kentucky's 6%, D41): as soon as the address is
+   complete the page asks /api/checkout/quote for the real total, so nothing changes on the provider's page. Keeps the last
    address in localStorage (bw_address_v1) and the order being paid in bw_pending_order. */
 (function () {
   const { $, $$ } = BW;

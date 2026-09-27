@@ -16,9 +16,10 @@
               recipient name the customer's bank will show); Zelle has no merchant API, so it is manual only
      test     admin accounts only: completes an order without charging, to rehearse fulfilment
      RESEND_API_KEY (secret) + EMAIL_FROM (var)  order e-mails through worker/email.js (skipped when absent)
-   Sales tax is Stripe Tax (D38): the Worker calculates it server-side for every payment method with the Tax
-   Calculations API, so the total is the same wherever the customer pays, then records a Tax Transaction when the
-   order is paid so it shows up in Stripe's filing reports. No registration in the customer's state = zero tax.
+   Sales tax (D41): the Worker adds it server-side for every payment method, so the total is the same wherever the
+   customer pays — Kentucky's flat 6% on items + shipping for a Kentucky address, nothing elsewhere, no per-order fee.
+   The var TAX_ENGINE = "stripe" switches to Stripe Tax instead (D38: Tax Calculations API at checkout, a Tax
+   Transaction once paid, a reversal on refunds) for the day the shop registers in a second state.
    "Manual" methods leave the order in pending_payment with instructions on the order page; the customer taps
    "I've sent it" (event) and an admin marks it paid in /admin. Methods with nothing configured are hidden.
    Returns (D39): the customer starts one from their order page within 7 days of delivery for unopened items; an admin
@@ -43,6 +44,13 @@ const MAX_QTY = 10, MAX_LINES = 30;
 // Stripe product tax codes: what we sell, and shipping. Stripe decides taxability per state from these.
 const TAX_CODE_ITEMS = "txcd_32040001";      // Dietary Supplements
 const TAX_CODE_SHIPPING = "txcd_92010001";   // Shipping
+/* Sales tax without a per-order fee (D41, the founder's Q31 choice). The shop is registered only in Kentucky, which has
+   one statewide rate and no local sales taxes, doesn't count dietary supplements as tax-free food, and taxes a delivery
+   charge along with the goods — so tax is 6% of items + shipping for a Kentucky address and nothing anywhere else. */
+const FLAT_TAX_PCT = { KY: 6 };
+const stripeTax = (env) => env.TAX_ENGINE === "stripe";   // Stripe Tax (D38) instead, once registered in more states
+const taxOn = (env) => !stripeTax(env) || !!env.STRIPE_SECRET_KEY;
+const kyZip = (zip) => { const p = Number(zip.slice(0, 3)); return p >= 400 && p <= 427; };   // every Kentucky ZIP starts 400–427
 /* Returns policy (founder, 2026-09-26): unopened items, 7 days from delivery. The window falls back to 21 days from
    despatch when nobody marked the order delivered, so a forgotten status change never costs a customer their return. */
 const RETURN_DAYS_AFTER_DELIVERY = 7, RETURN_DAYS_AFTER_SHIPPING = 21;
@@ -132,6 +140,7 @@ function checkAddress(a) {
   if (out.city.length < 2) throw new HttpError(400, "Enter a city.");
   if (!US_STATES.includes(out.state)) throw new HttpError(400, "Choose a US state (we ship within the US to start).");
   if (!/^\d{5}(-\d{4})?$/.test(out.zip)) throw new HttpError(400, "Enter a valid ZIP code.");
+  if ((out.state === "KY") !== kyZip(out.zip)) throw new HttpError(400, "That ZIP code doesn't match the state — please check both.");   // also keeps the tax honest
   return out;
 }
 
@@ -209,8 +218,12 @@ async function stripeVerify(env, request, raw) {   // Stripe-Signature: t=…,v1
   const expected = enc.encode(await hmacHex(env.STRIPE_WEBHOOK_SECRET, `${parts.t}.${raw}`));
   return parts.v1.some((sig) => timingEqual(enc.encode(sig), expected));
 }
-/* Sales tax — Stripe Tax, calculated here so every payment method charges the same total (D38).
-   A calculation is valid for 90 days; we keep its id on the order and turn it into a Tax Transaction once the order is
+async function salesTax(env, lines, shippingCents, address) {   // -> { tax (cents), calculation (Stripe Tax id, or null) }
+  if (stripeTax(env)) return taxCalculate(env, lines, shippingCents, address);
+  const pct = FLAT_TAX_PCT[address.state] || 0;
+  return { tax: Math.round((lines.reduce((sum, l) => sum + l.unit * l.qty, 0) + shippingCents) * pct / 100), calculation: null };
+}
+/* Stripe Tax (D38) — only with TAX_ENGINE = "stripe". A calculation is valid for 90 days; we keep its id on the order and turn it into a Tax Transaction once the order is
    paid, which is what Stripe's tax reports and filing use. Stripe returns zero tax wherever the shop isn't registered,
    so this is a no-op until the founder adds a registration (and an outright no-op without a Stripe key). */
 const taxCache = new Map();   // per-isolate: address+basket -> calculation, so retyping a ZIP doesn't buy another calculation
@@ -498,7 +511,7 @@ export const adminReturn = guard(async (request, env, ctx, rid, url) => {
 /* ---------- customer handlers ---------- */
 export const checkoutConfig = guard(async (request, env) => {
   const s = await currentSession(env, request), user = s && s.user;
-  return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, tax: !!env.STRIPE_SECRET_KEY,
+  return json({ ok: true, providers: providers(env, user), modes: providerModes(env, user), states: US_STATES, tax: taxOn(env),
     methods: Object.entries(SHIPPING_METHODS).map(([id, m]) => ({ id, label: m.label, eta: m.eta, carrier: m.carrier || "", rate: m.rate, freeOver: m.freeOver || 0 })),
     user: user ? { email: user.email, name: user.name } : null });
 });
@@ -512,7 +525,7 @@ export const checkoutQuote = guard(async (request, env) => {
   const lines = await priceLines(env, body.items);
   const subtotal = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
   const ship = shippingFor(str(body.shippingMethod, 20), subtotal);
-  const { tax } = await taxCalculate(env, lines, ship.cents, address);
+  const { tax } = await salesTax(env, lines, ship.cents, address);
   return json({ ok: true, subtotal, shipping: ship.cents, tax, total: subtotal + ship.cents + tax });
 });
 
@@ -526,7 +539,7 @@ export const checkout = guard(async (request, env, ctx, url) => {
   const lines = await priceLines(env, body.items);
   const subtotal = lines.reduce((sum, l) => sum + l.unit * l.qty, 0);
   const ship = shippingFor(str(body.shippingMethod, 20), subtotal);
-  const { tax, calculation } = await taxCalculate(env, lines, ship.cents, address);
+  const { tax, calculation } = await salesTax(env, lines, ship.cents, address);
   const total = subtotal + ship.cents + tax;
   const provider = str(body.provider, 10), modes = providerModes(env, user), mode = modes[provider];
   if (!mode) throw new HttpError(provider === "test" ? 403 : provider in modes ? 503 : 400, PROVIDER_OFF[provider] || "Choose a payment method.");

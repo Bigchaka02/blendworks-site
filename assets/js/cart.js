@@ -7,7 +7,7 @@
 (function () {
   window.BW = window.BW || {};
   const KEY = "bw_cart_v1", MAX_QTY = 10;
-  const SHIPPING_FLAT = 5.95, FREE_SHIPPING_OVER = 50;   // TODO(payments): real rates; tax comes from the provider
+  const SHIPPING_FLAT = 5.95, FREE_SHIPPING_OVER = 50;   // TODO(payments): real rates; sales tax is added at checkout by the Worker
 
   BW.formatPrice = (n) => "$" + n.toFixed(2);
   BW.getProduct = (id) => BW.products.find((p) => p.id === id || p.slug === id);

@@ -49,7 +49,7 @@ export async function run() {
     if (sql.startsWith("UPDATE email_tokens SET used_at = ?")) { const k = db.tokens.find((x) => x.id === p[1]); if (k) k.used_at = p[0]; return stmt(null); }
     if (sql.startsWith("INSERT INTO orders")) {
       const number = db.orders.reduce((m, o) => Math.max(m, o.number), 1000) + 1;
-      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], tax_calculation: p[12], tax_transaction: null, created_at: p[12], updated_at: p[13], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
+      db.orders.push({ id: p[0], number, access_key: p[1], user_id: p[2], email: p[3], status: "pending_payment", provider: p[4], currency: "usd", subtotal: p[5], shipping: p[6], tax: p[7], total: p[8], shipping_method: p[9], address: p[10], items: p[11], tax_calculation: p[12], tax_transaction: null, created_at: p[13], updated_at: p[14], provider_ref: null, payment_ref: null, tracking: null, note: null, paid_at: null, shipped_at: null, delivered_at: null, payment_info: null });
       return stmt(null);
     }
     if (sql.startsWith("SELECT * FROM orders WHERE id = ?")) return stmt(db.orders.find((o) => o.id === p[0]));
@@ -96,7 +96,7 @@ export async function run() {
     if (url === "https://api.stripe.com/v1/tax/calculations") {
       const p = Object.fromEntries(new URLSearchParams(init.body));
       calls.push({ taxCalc: p });
-      if (p["customer_details[address][postal_code]"] === "00000") return new Response(JSON.stringify({ error: { code: "customer_tax_location_invalid", message: "bad address" } }), { status: 400 });
+      if (p["customer_details[address][postal_code]"] === "42999") return new Response(JSON.stringify({ error: { code: "customer_tax_location_invalid", message: "bad address" } }), { status: 400 });
       let taxable = Number(p["shipping_cost[amount]"] || 0);
       for (let i = 0; p[`line_items[${i}][amount]`] !== undefined; i++) taxable += Number(p[`line_items[${i}][amount]`]);
       const tax = fake.taxOff ? 0 : Math.round(taxable * 0.07);
@@ -286,35 +286,51 @@ export async function run() {
     await settle();
     out.emailOff.noMails = calls.filter((c) => c.email).length === mailsOff;
     env.RESEND_API_KEY = savedKey;
-    // sales tax (Stripe Tax): quote, order totals, what each provider is asked to charge, the filing transaction
-    const taxItems = [{ id: "p-hydrate", qty: 2 }];
+    // sales tax, flat (D41, the default): Kentucky 6% of items + shipping, nothing elsewhere, never a Stripe Tax call
+    const taxItems = [{ id: "p-hydrate", qty: 2 }], calcsAtStart = calls.filter((c) => c.taxCalc).length, txAtStart = calls.filter((c) => c.taxTx).length;
     const q = await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
-    out.taxQuote = { status: q.status, ...q.data, expectedTax: Math.round((q.data.subtotal + q.data.shipping) * 0.07), addsUp: q.data.total === q.data.subtotal + q.data.shipping + q.data.tax };
-    out.taxQuoteBadAddress = (await call("POST", "/api/checkout/quote", { address: Object.assign({}, address, { zip: "00000" }), shippingMethod: "standard", items: taxItems })).status;
-    const calcCallsBefore = calls.filter((c) => c.taxCalc).length;
-    await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
-    out.taxCached = calls.filter((c) => c.taxCalc).length === calcCallsBefore;   // same basket + address: no second calculation bought
+    out.taxQuote = { status: q.status, ...q.data, expectedTax: Math.round((q.data.subtotal + q.data.shipping) * 0.06), addsUp: q.data.total === q.data.subtotal + q.data.shipping + q.data.tax };
+    const ohio = { name: "QA Buyer", line1: "1 High St", city: "Columbus", state: "OH", zip: "43215" };
+    out.taxQuoteOhio = (await call("POST", "/api/checkout/quote", { address: ohio, shippingMethod: "standard", items: taxItems })).data.tax;
+    const mismatch = async (a) => { const r = await call("POST", "/api/checkout/quote", { address: a, shippingMethod: "standard", items: taxItems }); return `${r.status} ${r.data.error}`; };
+    out.taxZipMismatch = [await mismatch(Object.assign({}, address, { zip: "43215" })), await mismatch(Object.assign({}, ohio, { zip: "40202" }))];
+    out.taxConfig = (await call("GET", "/api/checkout/config")).data.tax;
     const tx = await call("POST", "/api/checkout", { email: "tax@example.com", address, shippingMethod: "standard", provider: "stripe", items: taxItems });
     const orderTax = db.orders[db.orders.length - 1], stripeTaxParams = calls.filter((c) => c.stripe).pop().stripe;
-    out.taxOrder = { status: tx.status, tax: orderTax.tax, total: orderTax.total, addsUp: orderTax.total === orderTax.subtotal + orderTax.shipping + orderTax.tax, calculation: orderTax.tax_calculation,
+    out.taxOrder = { status: tx.status, tax: orderTax.tax, expected: Math.round((orderTax.subtotal + orderTax.shipping) * 0.06), addsUp: orderTax.total === orderTax.subtotal + orderTax.shipping + orderTax.tax, calculation: orderTax.tax_calculation,
       stripeChargesTax: Object.keys(stripeTaxParams).some((k) => /line_items\[\d+\]\[price_data\]\[product_data\]\[name\]/.test(k) && stripeTaxParams[k] === "Sales tax"),
       stripeTotal: [0, 1, 2].reduce((sum, i) => sum + (Number(stripeTaxParams[`line_items[${i}][price_data][unit_amount]`] || 0) * Number(stripeTaxParams[`line_items[${i}][quantity]`] || 0)), 0) };
     fake.stripePaid = true;
     await call("GET", `/api/orders/${orderTax.id}?key=${orderTax.access_key}`);
     await settle();
-    const txCall = calls.filter((c) => c.taxTx).pop();
-    out.taxTransaction = { recorded: !!txCall, calculation: txCall && txCall.taxTx.calculation, reference: txCall && txCall.taxTx.reference, stored: orderTax.tax_transaction };
     fake.stripePaid = false;
+    out.taxFlatNoStripeTax = { orderStatus: orderTax.status, calculations: calls.filter((c) => c.taxCalc).length - calcsAtStart, transactions: calls.filter((c) => c.taxTx).length - txAtStart };
     // PayPal gets the same tax in its breakdown
     const pt = await call("POST", "/api/checkout", { email: "tax2@example.com", address, shippingMethod: "standard", provider: "paypal", items: taxItems });
     const ppTax = calls.filter((c) => c.paypal).pop().paypal.purchase_units[0].amount;
     out.taxPaypal = { status: pt.status, taxTotal: ppTax.breakdown.tax_total.value, total: ppTax.value };
-    // no Stripe key at all: no calculation, no tax, checkout still works
+    // Stripe Tax engine (D38), kept for a second registration: TAX_ENGINE = "stripe" — quote, cache, filing transaction
+    env.TAX_ENGINE = "stripe";
+    const sq = await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
+    out.stripeTaxQuote = { status: sq.status, tax: sq.data.tax, expectedTax: Math.round((sq.data.subtotal + sq.data.shipping) * 0.07) };
+    out.stripeTaxBadAddress = (await call("POST", "/api/checkout/quote", { address: Object.assign({}, address, { zip: "42999" }), shippingMethod: "standard", items: taxItems })).status;
+    const calcsBefore = calls.filter((c) => c.taxCalc).length;
+    await call("POST", "/api/checkout/quote", { address, shippingMethod: "standard", items: taxItems });
+    out.stripeTaxCached = calls.filter((c) => c.taxCalc).length === calcsBefore;   // same basket + address: no second calculation bought
+    await call("POST", "/api/checkout", { email: "tax4@example.com", address, shippingMethod: "standard", provider: "stripe", items: taxItems });
+    const orderStx = db.orders[db.orders.length - 1];
+    fake.stripePaid = true;
+    await call("GET", `/api/orders/${orderStx.id}?key=${orderStx.access_key}`);
+    await settle();
+    fake.stripePaid = false;
+    const txCall = calls.filter((c) => c.taxTx).pop();
+    out.stripeTaxTransaction = { calculation: orderStx.tax_calculation, recorded: !!(txCall && txCall.taxTx.calculation === orderStx.tax_calculation), reference: txCall && txCall.taxTx.reference, stored: orderStx.tax_transaction };
+    // Stripe engine without a Stripe key: no tax, checkout still works, the page is told there's no tax
     const savedSkTax = env.STRIPE_SECRET_KEY; env.STRIPE_SECRET_KEY = "";
-    const calcsBeforeNoKey = calls.filter((c) => c.taxCalc).length;
     const zt = await call("POST", "/api/checkout", { email: "tax3@example.com", address, shippingMethod: "standard", provider: "paypal", items: taxItems });
-    out.taxNoKey = { status: zt.status, tax: db.orders[db.orders.length - 1].tax, calls: calls.filter((c) => c.taxCalc).length - calcsBeforeNoKey };
+    out.stripeTaxNoKey = { status: zt.status, tax: db.orders[db.orders.length - 1].tax, configTax: (await call("GET", "/api/checkout/config")).data.tax };
     env.STRIPE_SECRET_KEY = savedSkTax;
+    delete env.TAX_ENGINE;
     // returns: window, request, admin approve -> received -> refund (money, tax reversal, e-mails)
     const admin = await makeAdmin("boss@example.com");
     const ret = db.orders[0];   // the paid Stripe order from the top of this file
@@ -345,7 +361,7 @@ export async function run() {
     const line0 = JSON.parse(ret.items)[0];
     out.returnRefund = { status: rf.status, state: db.returns[0].status, amount: db.returns[0].amount,
       expected: line0.unit + Math.round(ret.tax * line0.unit / ret.subtotal), stripeAmount: refundCall && Number(refundCall.refund.amount), paymentIntent: refundCall && refundCall.refund.payment_intent,
-      orderRefunded: ret.refunded_cents - refundedBefore, orderStatus: ret.status, reversal: reversal && { mode: reversal.taxReversal.mode, flat: reversal.taxReversal.flat_amount, ref: reversal.taxReversal.reference }, mail: !!refundMail };
+      orderRefunded: ret.refunded_cents - refundedBefore, orderStatus: ret.status, reversal: reversal ? "unexpected: flat tax has no Stripe transaction" : "none (flat tax)", mail: !!refundMail };
     out.returnRefundTwice = (await admin("POST", `/api/admin/returns/${rid}`, { action: "refund" })).status;
     // a declined return tells the customer why; a PayPal order refunds through PayPal
     const rq2 = await call("POST", `/api/orders/${ret.id}/return?key=${ret.access_key}`, { items: [{ i: 1, qty: 1 }], reason: "other" });
@@ -363,6 +379,15 @@ export async function run() {
     await settle();
     const ppRefund = calls.filter((c) => c.ppRefund).pop();
     out.returnPaypal = { amount: db.returns[2].amount, paypalValue: ppRefund && ppRefund.ppRefund.amount.value, includesShipping: db.returns[2].amount > JSON.parse(ppOrder.items)[0].unit, orderStatus: ppOrder.status };
+    // an order taxed by the Stripe engine keeps its filing record in step when refunded, whichever engine is on now
+    orderStx.shipped_at = now() - 2 * 86400; orderStx.delivered_at = now() - 86400; orderStx.status = "delivered";
+    await call("POST", `/api/orders/${orderStx.id}/return?key=${orderStx.access_key}`, { items: [{ i: 0, qty: 1 }], reason: "changed_mind" });
+    const ridStx = db.returns[db.returns.length - 1].id;
+    await admin("POST", `/api/admin/returns/${ridStx}`, { action: "approve" });
+    await admin("POST", `/api/admin/returns/${ridStx}`, { action: "refund" });
+    await settle();
+    const stxReversal = calls.filter((c) => c.taxReversal).pop();
+    out.stripeTaxReversal = stxReversal && { mode: stxReversal.taxReversal.mode, flat: stxReversal.taxReversal.flat_amount, original: stxReversal.taxReversal.original_transaction === orderStx.tax_transaction };
     // price parity with the builder for the custom capsule blend
     const b = (await (await realFetch("/assets/data/ingredients.json")).json()), sp2 = custom.spec, size = b.capsuleSizes.find((s) => s.id === sp2.capsuleSize);
     let ingr = 0; sp2.ingredients.forEach((id) => { const ing = b.ingredients.find((i) => i.id === id); const mg = size.capacityMg * sp2.pct[id] / 100; ingr += (mg * sp2.capsules / 1000) * ing.costPerGram * b.pricing.MARKUP; });
