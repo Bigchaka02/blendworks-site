@@ -25,7 +25,10 @@
   //   RETURN_ADDRESS: where customers post returns (shown once a return is approved). Newlines as \n.
   "vars": { "SITE_URL": "https://blendworks.fit", "CASHAPP_CASHTAG": "", "VENMO_HANDLE": "", "ZELLE_CONTACT": "", "ZELLE_NAME": "",
     "EMAIL_FROM": "BlendWorks <contact.blendworks@blendworks.fit>", "CONTACT_EMAIL": "contact.blendworks@blendworks.fit", "RETURN_ADDRESS": "" },
-  // Secrets (dashboard -> Worker -> Settings -> Variables and Secrets), never here:
+  // Secrets (dashboard -> Worker -> Settings -> Variables and Secrets, type "Secret"), never here:
   //   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, RESEND_API_KEY
+  // keep_vars: a value saved in the dashboard as type "Text" instead of "Secret" survives the next deploy. Without it,
+  // every push wipes dashboard text variables — which is how RESEND_API_KEY vanished on 2026-09-26.
+  "keep_vars": true,
   "observability": { "enabled": true }
 }
